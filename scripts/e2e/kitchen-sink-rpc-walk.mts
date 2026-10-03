@@ -28,6 +28,7 @@ import {
   resolveWindowsSystem32Path,
   resolveWindowsTaskkillPath,
 } from "../lib/windows-taskkill.mjs";
+import { resolveGatewayCliPayload } from "./lib/gateway-frame-payload.mjs";
 import {
   calibrateKitchenSinkResources,
   KITCHEN_RESOURCE_CONTROLS,
@@ -1075,16 +1076,7 @@ export function unwrapRpcPayload(raw: unknown): unknown {
   ) {
     throw new Error(`gateway RPC returned error envelope: ${boundedJsonPreview(envelope.error)}`);
   }
-  if (hasOwnPayloadField(raw, "result")) {
-    return raw.result;
-  }
-  if (hasOwnPayloadField(raw, "payload")) {
-    return raw.payload;
-  }
-  if (hasOwnPayloadField(raw, "data")) {
-    return raw.data;
-  }
-  return raw;
+  return resolveGatewayCliPayload(raw);
 }
 
 async function rpcCall(method: string, params: unknown, options: RpcCallOptions) {
@@ -1975,7 +1967,6 @@ const READ_ONLY_RPC_PROBES = [
   { method: "sessions.list", params: {} },
   { method: "cron.status", params: {} },
   { method: "cron.list", params: { includeDisabled: true } },
-  { method: "tasks.list", params: {} },
   { method: "usage.status", params: {} },
   { method: "usage.cost", params: {} },
   { method: "voicewake.get", params: {} },
@@ -1993,14 +1984,6 @@ const READ_ONLY_RPC_PROBES = [
 ];
 
 const AUTHORIZATION_RPC_PROBES = [{ method: "skills.bins", params: {} }];
-
-export function listKitchenSinkToolInvokeNames() {
-  return KITCHEN_SINK_TOOL_INVOKES.map((entry) => entry.name);
-}
-
-export function listKitchenSinkReadOnlyRpcProbeNames() {
-  return READ_ONLY_RPC_PROBES.map((entry) => entry.method);
-}
 
 export function listKitchenSinkAuthorizationRpcProbeNames() {
   return AUTHORIZATION_RPC_PROBES.map((entry) => entry.method);
@@ -2141,8 +2124,6 @@ export function assertGatewayStatusPayload(payload: unknown) {
     ],
     [Array.isArray(status.channelSummary), "channelSummary array"],
     [Array.isArray(status.queuedSystemEvents), "queuedSystemEvents array"],
-    [isRecord(status.tasks), "tasks summary"],
-    [isRecord(status.taskAudit), "taskAudit summary"],
     [
       isRecord(sessions) &&
         Array.isArray(sessions.paths) &&

@@ -14,11 +14,8 @@ import {
 } from "../state/openclaw-state-db.js";
 import { OPENCLAW_STATE_SCHEMA_SQL } from "../state/openclaw-state-schema.js";
 import type { NodeWorkerSupervisorIdentity } from "../worker/node-supervisor-protocol.js";
-import {
-  nodeWorkerTurnMatchesIdentity,
-  type NodeWorkerLaunchClaim,
-  type NodeWorkerTurnReceipt,
-} from "./node-worker-journal.types.js";
+import { nodeWorkerTurnMatchesIdentity } from "../worker/node-supervisor-protocol.js";
+import type { NodeWorkerLaunchClaim, NodeWorkerTurnReceipt } from "./node-worker-journal.types.js";
 import {
   isNodeWorkerTerminalState,
   type NodeWorkerLaunchReceipt,
@@ -132,15 +129,11 @@ function pruneTerminal(database: DatabaseSync, nowMs: number, excludeTurnId: str
 
 /** Immutable turn outcomes attached to a separately supervised physical worker. */
 export class NodeWorkerTurnKernel {
-  private readonly databaseOptions: OpenClawStateDatabaseOptions;
-
   constructor(
-    options: OpenClawStateDatabaseOptions & {
+    private readonly databaseOptions: OpenClawStateDatabaseOptions & {
       database: NonNullable<OpenClawStateDatabaseOptions["database"]>;
     },
-  ) {
-    this.databaseOptions = options;
-  }
+  ) {}
 
   private write<T>(operationLabel: string, operation: (database: DatabaseSync) => T): T {
     let initialized: DatabaseSync | undefined;

@@ -12,7 +12,7 @@ const DEFAULT_TYPING_INTERVAL_SECONDS = 6;
 const DEFAULT_TYPING_TTL_MS = 2 * 60_000;
 const MAX_TYPING_INTERVAL_MS = Math.floor(MAX_TIMER_TIMEOUT_MS / 2);
 
-function resolveTypingIntervalMs(seconds: number | undefined): number {
+export function resolveTypingIntervalMs(seconds: number | undefined): number {
   if (Number.isFinite(seconds) && (seconds ?? 0) <= 0) {
     return 0;
   }
@@ -72,14 +72,11 @@ export function createTypingController(params: {
       cleanup: () => {},
     };
   }
-  let started = false;
   let active = false;
   let runComplete = false;
   let dispatchIdle = false;
   let triggerInFlight = false;
-  // Important: callbacks (tool/block streaming) can fire late (after the run completed),
-  // especially when upstream event emitters don't await async listeners.
-  // Once we stop typing, we "seal" the controller so late events can't restart typing forever.
+  // Late streaming callbacks must not restart a completed controller.
   let sealed = false;
   let typingTtlTimer: NodeJS.Timeout | undefined;
   const typingIntervalMs = resolveTypingIntervalMs(params.typingIntervalSeconds);
@@ -114,13 +111,7 @@ export function createTypingController(params: {
   };
 
   const refreshTypingTtl = () => {
-    if (sealed) {
-      return;
-    }
-    if (!typingIntervalMs || typingIntervalMs <= 0) {
-      return;
-    }
-    if (typingTtlMs <= 0) {
+    if (sealed || typingIntervalMs <= 0 || typingTtlMs <= 0) {
       return;
     }
     if (typingTtlTimer) {
@@ -167,20 +158,16 @@ export function createTypingController(params: {
     if (sealed || runComplete) {
       return;
     }
-    active = true;
-    if (started) {
+    if (active) {
       return;
     }
-    started = true;
+    active = true;
     await scheduleTyping();
   };
 
   const maybeStopOnIdle = () => {
-    if (!active) {
-      return;
-    }
     // Stop only when the model run is done and the dispatcher queue is empty.
-    if (runComplete && dispatchIdle) {
+    if (active && runComplete && dispatchIdle) {
       cleanup();
     }
   };
@@ -195,17 +182,13 @@ export function createTypingController(params: {
     if (!onReplyStart) {
       return;
     }
-    if (!keepalive) {
-      await ensureStart();
-      return;
-    }
-    if (typingLoop.isRunning()) {
+    if (keepalive && typingLoop.isRunning()) {
       return;
     }
     await ensureStart();
     // Cleanup or completion can run while the start callback yields. The loop
     // must not acquire a timer after its owning controller has closed.
-    if (!sealed && !runComplete) {
+    if (keepalive && !sealed && !runComplete) {
       typingLoop.start();
     }
   };

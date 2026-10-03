@@ -8,7 +8,6 @@ import knipConfig from "../../config/knip.config.ts";
 import scriptExportsKnipConfig from "../../config/knip.scripts-exports.config.ts";
 import {
   checkExportScan,
-  checkUnusedExports,
   parseKnipCompactUnusedExports,
   parseKnipCompactUnusedExportsResult,
 } from "../../scripts/check-deadcode-exports.mts";
@@ -289,12 +288,6 @@ describe("check-deadcode-exports", () => {
         "tsdown.ai.config.ts!",
       ]),
     );
-    expect(knipConfig.workspaces["extensions/acpx"].entry).toEqual(
-      expect.arrayContaining([
-        "src/runtime-internals/mcp-command-line.mjs!",
-        "src/runtime-internals/mcp-proxy.mjs!",
-      ]),
-    );
     expect(knipConfig.workspaces["extensions/canvas"].entry).toEqual(
       expect.arrayContaining([
         "src/host/a2ui-app/bootstrap.js!",
@@ -460,30 +453,6 @@ tsdown.ai.config.ts: default
     expect(parseKnipCompactUnusedExportsResult("Unused exports (0)\n")).toEqual({
       entries: [],
       sawExportSection: true,
-    });
-  });
-
-  it("accepts an empty compact report with zero unused exports", () => {
-    expect(checkUnusedExports("")).toEqual({
-      ok: true,
-      entries: [],
-      message: "",
-    });
-  });
-
-  it("rejects every unused export without an allowlist", () => {
-    expect(
-      checkUnusedExports(`Unused exports (2)
-src/z.ts: zebra
-src/a.ts: alpha
-`),
-    ).toEqual({
-      ok: false,
-      entries: ["src/a.ts: alpha", "src/z.ts: zebra"],
-      message: `Unused exports are not allowed:
-  src/a.ts: alpha
-  src/z.ts: zebra
-Delete the exports or model their real production consumers in Knip.`,
     });
   });
 

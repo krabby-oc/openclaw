@@ -25,6 +25,31 @@ the remote's full ref inventory. Local upstreams need no fetch; an unknown upstr
 stays unknown. The selected upstream's own missing history may still be downloaded.
 Ahead/behind counts remain unavailable when shallow history has no merge base.
 
+The Gateway initializes local update facts after post-ready startup work settles.
+Local Git discovery uses the managed Gateway startup allowance (45 seconds, or
+90 seconds on Windows) per command and retries once after a one-second backoff on
+timeout. If both attempts time out, it logs one
+initialization warning and the `update.status` RPC reports
+`schedule.install.git.status: "unavailable"` with reason `"git-unavailable"`.
+Status reads reuse that result; an explicit Dev checkout refresh can recover it.
+Package directories without Git metadata skip the Git discovery subprocess.
+
+For a clean source checkout configured with `update.channel: "stable"` or `"beta"`, `update status --json` can include `update.git.preferredTarget` with `channel`, `tag`, and the exact commit `sha`.
+This uses the updater's release selector and fetches into a temporary private Git repository, preserving the installed refs and checkout.
+The selected tag must still resolve to that commit at the release remote; retained local-only tags do not count as fresh targets.
+
+An absent field means unknown.
+Default/dev targets, explicit refs, unsupported channels, dirty checkouts, and unsuccessful inspections do not produce this fact.
+It describes the preferred selection for the observed configured channel, not candidate build success, downgrade approval, service readiness, or safe state recovery.
+An explicit update invocation can select a different target or install method.
+Older installed status commands cannot acquire this observation from candidate code.
+
+For Git installs, `update status --json` can include `update.git.artifacts`.
+`ready: true` includes the installed artifact `version` and immutable `buildId` after the native verifier checks the observed source commit, build stamps, runtime entry, and Control UI assets.
+`ready: false` means that verification failed; an absent field means artifact readiness is unknown.
+This observation does not establish remote target freshness, candidate validation, or the identity or health of the running Gateway, and does not authorize state recovery.
+The version prefers recorded build metadata and falls back to the package version when the build has no version, following the CLI's version precedence.
+
 If an update hands work to a background helper, the command has not finished the
 update. Follow its final `openclaw update status` command to check progress and the
 outcome. `openclaw gateway status --deep` checks Gateway health, not update progress.
@@ -149,9 +174,12 @@ the stale row does not block updater admission. Upgrade normally, then run
 `openclaw update repair` from the updated installation if status still shows the
 old run. See [Updating](/install/updating#stale-update-history).
 
-Human output, chat completion notices, the Control UI update view, and the
-`openclaw status` update line use the same report, including on success. The report shows recorded facts; an absent verification fact
-means that check has not been observed.
+Chat completion notices show a short outcome and a next step. For diagnostics
+and recovery instructions, open **Settings → Updates** in the Control UI or run
+`openclaw update status` in your terminal. Human status output, the Control UI
+update view, and the `openclaw status` update line use the detailed report,
+including on success. The report shows recorded facts; an absent verification
+fact means that check has not been observed.
 
 An unsuccessful identity check is reported as a version or build mismatch only
 when the saved observed and expected values disagree. Missing identity evidence
@@ -161,7 +189,7 @@ The Control UI's version badge shows **Not verified** for unavailable identity
 evidence and **Failed** for an observed version or build mismatch. This does not
 change the recorded update outcome.
 
-For failed runs, human status, completion notices, and reviewed failure reports
+For failed runs, human status and reviewed failure reports
 also try a read-only health request to the recorded Gateway port. A response
 supersedes historical claims that the Gateway is stopped; it does not change the
 failed update outcome or verify rollback safety. Saved recovery advice is labeled
@@ -213,6 +241,13 @@ and its local executor have settled. A late ownership or release failure returns
 an error instead of publishing an earlier success. Existing terminal history is
 not overwritten.
 
+Unexpected executor admission, settlement, or report publication failures also
+record the last reached phase, the redacted error, and whether rollback was needed
+or attempted before offering an interactive failure report. If ownership is lost
+or pending recovery prevents a safe history write, the command reports recovery
+pending and preserves the existing history for its owning updater instead of
+starting interactive triage.
+
 Activation has an enclosing deadline derived from the update's existing phase
 budget. If it expires, the updater cancels owned work and waits within that budget
 for its child processes to settle, then records `update-activation-timeout` as a
@@ -241,6 +276,12 @@ openclaw gateway call update.runs.get --params '{"runId":"<run-id>"}'
 fields and adds optional `activeRun` and `lastRun` records. While a run is active,
 the Gateway broadcasts `update.run.changed` with `runId`, `phase`, `status`, and
 `updatedAtMs`. Reconnect and read the row to recover changes missed during restart.
+
+The Gateway's `update.status` reports current automatic-update policy and any live
+campaign independently of checkout discovery. Installation details can arrive
+later; reading status does not start scheduling or clear an active campaign. If
+the update channel cannot be resolved, `schedule` remains absent rather than
+claiming the scheduler is idle.
 
 When a history request needs a read-only snapshot, the Gateway prepares it
 asynchronously so other requests can continue. The snapshot preserves the source
@@ -281,6 +322,16 @@ version is not proof of the version currently serving requests. Optional Doctor
 diagnostic failures remain warnings, while refused config writes and incomplete
 required migrations remain errors. Historical runs cannot recover facts that
 their updater never recorded.
+
+If a candidate check exits by signal, its failed step retains `termination`,
+`signal`, and a redacted `stderrTail` (up to 80 lines, 512 characters per line,
+and 8,192 characters total, reserving the fatal header when present). The report names the check, including **Checking
+data migrations** for Doctor, and shows the native diagnostics ahead of adjacent
+plugin warnings. The terminal and local Markdown report retain the excerpt;
+the short status report can truncate it. JSON history keeps the bounded excerpt,
+and reviewed public reports retain the termination class and recognized signal. This capture
+requires the updated updater; a candidate cannot restore diagnostics that an
+older installed driver discarded.
 
 Current updaters record their process identities and refresh the ledger
 every 30 seconds during long build, install, and finalization phases. Those

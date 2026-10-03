@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@openclaw/normalization-core/node-crypto";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { stableStringify } from "@openclaw/normalization-core/stable-stringify";
 import { runAgentHarnessBeforeMessageWriteHook } from "../../agents/harness/hook-helpers.js";
@@ -14,8 +14,8 @@ import {
 import type { UserTurnOriginalInputCommit } from "../../sessions/user-turn-transcript.types.js";
 import { extractTextFromChatContent } from "../../shared/chat-content.js";
 import type { MentionInbox } from "../mention-inbox.types.js";
+import { hasGatewayAdminScope } from "../operator-scopes.js";
 import { formatForLog } from "../ws-log.js";
-import { hasGatewayAdminScope } from "./chat-origin-routing.js";
 import { buildRestartSafeChatTranscriptState } from "./chat-restart-recovery.js";
 import type { AdmittedChatSend } from "./chat-send-admission.js";
 import {
@@ -24,6 +24,7 @@ import {
 } from "./chat-send-reply-context.js";
 import type { NormalizedChatSendRequest } from "./chat-send-request.js";
 import type { PreparedChatSendSession } from "./chat-send-session.js";
+import type { createChatSendGoalCommitGuard } from "./chat-send-work-admission.js";
 import { gatewayClientSenderFields } from "./gateway-client-identity.js";
 import type { GatewayClient } from "./shared-types.js";
 
@@ -33,9 +34,7 @@ export type GatewayChatUserTurnPersist = (options?: {
 
 type GatewayChatUserTurnController = {
   baseInput: UserTurnInput;
-  persist: (
-    ...args: Parameters<GatewayChatUserTurnPersist>
-  ) => ReturnType<UserTurnTranscriptRecorder["persistFallback"]>;
+  persist: GatewayChatUserTurnPersist;
   persistBestEffort: GatewayChatUserTurnPersist;
   recorder: UserTurnTranscriptRecorder;
   replyContextFieldsPromise?: Promise<ChatSendReplyContextFields>;
@@ -51,7 +50,7 @@ export function createGatewayChatUserTurnController(params: {
   startedAt: number;
   warn: (message: string) => void;
   mentionInbox?: MentionInbox;
-  assertGoalCurrent?: () => void;
+  goalCommitGuard?: ReturnType<typeof createChatSendGoalCommitGuard>;
   assertOriginalInputCommit?: () => void;
 }): GatewayChatUserTurnController {
   const { admission, request, session } = params;
@@ -113,19 +112,17 @@ export function createGatewayChatUserTurnController(params: {
       ? {
           // Attribution and submitted bytes survive reconnect; display names, leaf
           // cursors and generated media paths are not immutable request identity.
-          pendingInputRequestFingerprint: createHash("sha256")
-            .update(
-              stableStringify([
-                {
-                  ...request.p,
-                  sessionId: admission.sessionBinding.sessionId,
-                  expectedLeafEntryId: undefined,
-                },
-                sender.identity ?? sender.id,
-                hasGatewayAdminScope(params.client),
-              ]),
-            )
-            .digest("hex"),
+          pendingInputRequestFingerprint: sha256Hex(
+            stableStringify([
+              {
+                ...request.p,
+                sessionId: admission.sessionBinding.sessionId,
+                expectedLeafEntryId: undefined,
+              },
+              sender.identity ?? sender.id,
+              hasGatewayAdminScope(params.client),
+            ]),
+          ),
         }
       : {}),
     ...(request.goalOperation
@@ -134,7 +131,7 @@ export function createGatewayChatUserTurnController(params: {
             kind: "goal",
             operation: request.goalOperation,
             runId: session.clientRunId,
-            assertCurrent: params.assertGoalCurrent,
+            ...params.goalCommitGuard,
           },
         }
       : {}),

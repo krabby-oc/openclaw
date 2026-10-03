@@ -14,6 +14,7 @@ import {
   TALK_SECRETS_SCOPE,
   WRITE_SCOPE,
 } from "../gateway/operator-scopes.js";
+import { normalizeGitHubLogin } from "../utils/github-login.js";
 import {
   isValidPortalIngressDomain,
   portalIngressConflictsWithOrigin,
@@ -73,6 +74,7 @@ const GatewayOperatorRoleDefinitionSchema = z.strictObject({
 });
 const GatewayOperatorRoleNameSchema = z.string().trim().min(1).max(128);
 const GATEWAY_HTTP_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const GatewayHttpImagesSchema = z.strictObject(ResponsesEndpointUrlFetchShape).optional();
 
 function validateGatewayPublicOrigin(value: string): boolean {
   if (!validateHttpOrigin(value)) {
@@ -190,7 +192,6 @@ export const GatewayConfigSchema = z
         allowExternalEmbedUrls: z.boolean().optional(),
         /** Fetch public-site favicons through the Gateway for Control UI links (default true). */
         automaticallyFetchFavicons: z.boolean().optional(),
-        /** Optional max-width for grouped Control UI chat messages (default: min(900px, 68%)). */
         /** Allowed browser origins for Control UI/WebChat websocket connections. */
         allowedOrigins: z.array(z.string()).optional(),
         /**
@@ -198,6 +199,12 @@ export const GatewayConfigSchema = z
          * Supported long-term for deployments that intentionally rely on this policy.
          */
         dangerouslyAllowHostHeaderOriginFallback: z.boolean().optional(),
+      })
+      .optional(),
+    uploads: z
+      .strictObject({
+        /** Allow client file/image uploads to the Gateway (default true). Hot-applies. */
+        enabled: z.boolean().optional(),
       })
       .optional(),
     cliAgents: z
@@ -328,8 +335,14 @@ export const GatewayConfigSchema = z
     /** Optional profile-bound operator roles; omitted preserves legacy authorization. */
     roles: z
       .strictObject({
-        /** Required validated default for profiles without a valid assigned role. */
+        /** Required default for profiles without a valid explicit or GitHub login assignment. */
         default: GatewayOperatorRoleNameSchema,
+        assignments: z
+          .strictObject({
+            /** Case-insensitive GitHub login assignments; explicit profile assignments win. */
+            byGithubLogin: z.record(z.string(), GatewayOperatorRoleNameSchema).optional(),
+          })
+          .optional(),
         /** Closed capability bundles indexed by administrator-selected role names. */
         definitions: z
           .record(GatewayOperatorRoleNameSchema, GatewayOperatorRoleDefinitionSchema)
@@ -345,6 +358,26 @@ export const GatewayConfigSchema = z
             message: "gateway.roles.default must name a configured role definition",
             path: ["default"],
           });
+        }
+        const githubLogins = new Set<string>();
+        for (const [login, role] of Object.entries(roles.assignments?.byGithubLogin ?? {})) {
+          const normalizedLogin = normalizeGitHubLogin(login)?.toLowerCase();
+          const path = ["assignments", "byGithubLogin", login];
+          if (!normalizedLogin) {
+            ctx.addIssue({ code: "custom", message: "Invalid GitHub login", path });
+          } else if (githubLogins.has(normalizedLogin)) {
+            ctx.addIssue({ code: "custom", message: "Duplicate GitHub login", path });
+          } else {
+            githubLogins.add(normalizedLogin);
+          }
+          if (!Object.hasOwn(roles.definitions, role)) {
+            ctx.addIssue({
+              code: "custom",
+              message:
+                "gateway.roles.assignments.byGithubLogin must name a configured role definition",
+              path,
+            });
+          }
         }
       })
       .optional(),
@@ -413,11 +446,7 @@ export const GatewayConfigSchema = z
             chatCompletions: z
               .strictObject({
                 enabled: z.boolean().optional(),
-                images: z
-                  .strictObject({
-                    ...ResponsesEndpointUrlFetchShape,
-                  })
-                  .optional(),
+                images: GatewayHttpImagesSchema,
               })
               .optional(),
             responses: z
@@ -437,11 +466,7 @@ export const GatewayConfigSchema = z
                       .optional(),
                   })
                   .optional(),
-                images: z
-                  .strictObject({
-                    ...ResponsesEndpointUrlFetchShape,
-                  })
-                  .optional(),
+                images: GatewayHttpImagesSchema,
               })
               .optional(),
           })

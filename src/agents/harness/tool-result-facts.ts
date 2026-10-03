@@ -1,4 +1,5 @@
 import { asOptionalRecord, isRecord } from "@openclaw/normalization-core/record-coerce";
+import { normalizeTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
 import type { AgentToolResult } from "../../../packages/agent-core/src/types.js";
 import {
   HEARTBEAT_RESPONSE_TOOL_NAME,
@@ -83,23 +84,17 @@ export function recordAgentHarnessToolResultTelemetry(params: {
   if (!params.messagingDelivered) {
     return undefined;
   }
-  params.telemetry.didSendViaMessagingTool = true;
   if (
     asOptionalRecord(asOptionalRecord(params.mediaTrustResult)?.details)?.sourceReplySink ===
     "internal-ui"
   ) {
     const sourceReplyPayload = params.extractSourceReplyPayload(params.result);
-    if (!sourceReplyPayload) {
-      return undefined;
-    }
-    const record = {
-      ...sourceReplyPayload,
-      ...(params.sourceReplyFinal !== undefined
-        ? { sourceReplyFinal: params.sourceReplyFinal }
-        : {}),
-    };
-    params.telemetry.messagingToolSourceReplyPayloads.push(record);
-    if (params.mediaDeliveryConfirmed) {
+    const record = recordAgentHarnessMessagingDelivery({
+      facts: params.telemetry,
+      sourceReplyPayload,
+      sourceReplyFinal: params.sourceReplyFinal,
+    });
+    if (record && params.mediaDeliveryConfirmed) {
       params.telemetry.confirmedMediaDeliveries.push({
         kind: "sourceReply",
         sourceUrls: params.resolveMessagingMediaSourceUrls(
@@ -109,27 +104,22 @@ export function recordAgentHarnessToolResultTelemetry(params: {
     }
     return record;
   }
-  const text = readFirstString(params.args, ["text", "message", "body", "content"]);
-  if (text) {
-    params.telemetry.messagingToolSentTexts.push(text);
-  }
   const mediaUrls = params.mediaDeliveryConfirmed
     ? params.collectMessagingMediaUrls(params.args)
     : [];
-  params.telemetry.messagingToolSentMediaUrls.push(...mediaUrls);
-  const record = {
-    ...(params.messagingTarget ?? {
+  const record = recordAgentHarnessMessagingDelivery({
+    facts: params.telemetry,
+    text: readFirstString(params.args, ["text", "message", "body", "content"]),
+    mediaUrls,
+    target: params.messagingTarget ?? {
       tool: params.toolName,
       provider: readFirstString(params.args, ["provider", "channel"]) ?? params.toolName,
       accountId: readFirstString(params.args, ["accountId", "account_id"]),
       to: readFirstString(params.args, ["to", "target", "recipient"]),
       threadId: readFirstString(params.args, ["threadId", "thread_id", "messageThreadId"]),
-    }),
-    ...(text ? { text } : {}),
-    ...(mediaUrls.length > 0 ? { mediaUrls } : {}),
-    ...(params.sourceReplyFinal !== undefined ? { sourceReplyFinal: params.sourceReplyFinal } : {}),
-  };
-  params.telemetry.messagingToolSentTargets.push(record);
+    },
+    sourceReplyFinal: params.sourceReplyFinal,
+  });
   if (mediaUrls.length > 0) {
     params.telemetry.confirmedMediaDeliveries.push({
       kind: "outbound",
@@ -166,14 +156,18 @@ export function resolveAgentHarnessToolResultPresentation(params: {
 }
 
 /** Records a delivery already established by the caller's messaging receipt. */
-export function recordAgentHarnessMessagingDelivery(params: {
-  facts: AgentHarnessMessagingDeliveryFacts;
-  sourceReplyPayload?: MessagingToolSourceReplyPayload;
-  target?: MessagingToolSend;
-  text?: string;
-  mediaUrls?: string[];
-  sourceReplyFinal?: boolean;
-}): MessagingToolSend | MessagingToolSourceReplyPayload | undefined {
+export function recordAgentHarnessMessagingDelivery(
+  params: AgentHarnessMessagingDeliveryParams & {
+    target: MessagingToolSend;
+    sourceReplyPayload?: undefined;
+  },
+): MessagingToolSend;
+export function recordAgentHarnessMessagingDelivery(
+  params: AgentHarnessMessagingDeliveryParams,
+): MessagingToolSend | MessagingToolSourceReplyPayload | undefined;
+export function recordAgentHarnessMessagingDelivery(
+  params: AgentHarnessMessagingDeliveryParams,
+): MessagingToolSend | MessagingToolSourceReplyPayload | undefined {
   const { facts, sourceReplyPayload, target, text, mediaUrls = [], sourceReplyFinal } = params;
   facts.didSendViaMessagingTool = true;
   const finality = sourceReplyFinal !== undefined ? { sourceReplyFinal } : {};
@@ -230,6 +224,15 @@ export function recordAgentHarnessToolResultMedia(params: {
   return { ...media, mediaUrls };
 }
 
+type AgentHarnessMessagingDeliveryParams = {
+  facts: AgentHarnessMessagingDeliveryFacts;
+  sourceReplyPayload?: MessagingToolSourceReplyPayload;
+  target?: MessagingToolSend;
+  text?: string;
+  mediaUrls?: string[];
+  sourceReplyFinal?: boolean;
+};
+
 export type AgentHarnessMessagingDeliveryFacts = {
   didSendViaMessagingTool: boolean;
   messagingToolSentTexts: string[];
@@ -272,46 +275,23 @@ function readFirstString(record: Record<string, unknown>, keys: string[]): strin
 }
 
 export function collectAgentHarnessMessagingMediaUrls(record: Record<string, unknown>): string[] {
-  const urls: string[] = [];
-  const pushMediaUrl = (value: unknown) => {
-    if (typeof value === "string" && value.trim()) {
-      urls.push(value.trim());
-    }
-  };
-  const pushAttachment = (value: unknown) => {
-    if (!isRecord(value)) {
-      return;
-    }
-    for (const key of ["media", "mediaUrl", "path", "filePath", "fileUrl", "url"]) {
-      pushMediaUrl(value[key]);
-    }
-  };
-  for (const key of [
-    "media",
-    "mediaUrl",
-    "media_url",
-    "path",
-    "filePath",
-    "fileUrl",
-    "imageUrl",
-    "image_url",
-  ]) {
-    const value = record[key];
-    pushMediaUrl(value);
-  }
+  const urls = normalizeTrimmedStringList(
+    ["media", "mediaUrl", "media_url", "path", "filePath", "fileUrl", "imageUrl", "image_url"].map(
+      (key) => record[key],
+    ),
+  );
   for (const key of ["mediaUrls", "media_urls", "imageUrls", "image_urls"]) {
-    const value = record[key];
-    if (!Array.isArray(value)) {
-      continue;
-    }
-    for (const entry of value) {
-      pushMediaUrl(entry);
+    for (const url of normalizeTrimmedStringList(record[key])) {
+      urls.push(url);
     }
   }
-  const attachments = record.attachments;
-  if (Array.isArray(attachments)) {
-    for (const attachment of attachments) {
-      pushAttachment(attachment);
+  for (const attachment of Array.isArray(record.attachments) ? record.attachments : []) {
+    if (isRecord(attachment)) {
+      urls.push(
+        ...normalizeTrimmedStringList(
+          ["media", "mediaUrl", "path", "filePath", "fileUrl", "url"].map((key) => attachment[key]),
+        ),
+      );
     }
   }
   return urls;

@@ -1,4 +1,4 @@
-// Single-message lookup applies the same visibility and display projection as chat.history.
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   ErrorCodes,
   errorShape,
@@ -28,7 +28,6 @@ import {
 import { loadGatewaySessionEntryReadOnly } from "../session-utils.js";
 import { readChatHistoryPage } from "./chat-history-pages.js";
 import { projectPendingInputMessage } from "./chat-pending-inputs.js";
-import { normalizeOptionalChatText as normalizeOptionalText } from "./chat-text-normalization.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
@@ -98,7 +97,7 @@ export const chatMessageGetHandlers: GatewayRequestHandlers = {
       return;
     }
     const { sessionKey, messageId, maxChars } = params;
-    const agentIdOverride = normalizeOptionalText(params.agentId);
+    const agentIdOverride = normalizeOptionalString(params.agentId);
     const cfg = context.getRuntimeConfig();
     const requestedAgent = resolveRequestedSessionAgentId(cfg, sessionKey, agentIdOverride);
     if (!requestedAgent.ok) {
@@ -154,12 +153,11 @@ export const chatMessageGetHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const effectiveMaxChars =
-      typeof maxChars === "number" ? maxChars : Math.min(MAX_PAYLOAD_BYTES, 1_000_000);
+    const effectiveMaxChars = maxChars ?? Math.min(MAX_PAYLOAD_BYTES, 1_000_000);
     if (messageId.startsWith(CHAT_PENDING_INPUT_MESSAGE_PREFIX)) {
       // Pending IDs have their own owner. A transcript miss must never widen
       // into pending custody or an archived physical session.
-      const pending = readSessionPendingInput(
+      const pending = await readSessionPendingInput(
         {
           agentId: sessionAgentId,
           sessionKey: canonicalKey,
@@ -168,6 +166,9 @@ export const chatMessageGetHandlers: GatewayRequestHandlers = {
         },
         messageId.slice(CHAT_PENDING_INPUT_MESSAGE_PREFIX.length),
       );
+      if (!canReadSession()) {
+        return;
+      }
       if (!pending) {
         respond(true, { ok: false, unavailableReason: "not_found" });
         return;
@@ -235,11 +236,18 @@ export const chatMessageGetHandlers: GatewayRequestHandlers = {
       respond(true, { ok: false, unavailableReason: "oversized" });
       return;
     }
-
+    const resolveCronJobName = await prepareForwardedMessageCronJobNameResolver(
+      [resolved.message],
+      context.cronStorePath,
+    );
+    if (!canReadSession()) {
+      return;
+    }
     const projectedMessage = resolved.message
       ? projectChatDisplayMessage(resolved.message, {
           maxChars: effectiveMaxChars,
           resolveCurrentUserProfileDisplay,
+          resolveCronJobName,
         })
       : undefined;
     const projected = projectedMessage

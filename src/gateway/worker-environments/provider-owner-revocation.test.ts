@@ -82,7 +82,7 @@ describe("worker environment owner revocation", () => {
         .run("b".repeat(64), ENVIRONMENT_ID);
       await support.reopenWorkerEnvironmentStore();
       const placements = createWorkerSessionPlacementStore({ database: support.testState.stateDb });
-      let placement = placements.startDispatch({
+      let placement = await placements.startDispatch({
         sessionId: SESSION_ID,
         sessionKey: "agent:main:stale-result-owner",
         agentId: "main",
@@ -119,7 +119,7 @@ describe("worker environment owner revocation", () => {
         expectedGeneration: placement.generation,
         patch: { activeOwnerEpoch: attached.ownerEpoch },
       });
-      const claim = placements.claimTurn({
+      const claim = await placements.claimTurn({
         sessionId: SESSION_ID,
         sessionKey: placement.sessionKey,
         agentId: placement.agentId,
@@ -131,7 +131,7 @@ describe("worker environment owner revocation", () => {
           ownerEpoch: attached.ownerEpoch,
         },
       });
-      createWorkerSessionPlacementGate(placements).updateAckCursors({ claim, liveSeq: 1 });
+      await createWorkerSessionPlacementGate(placements).updateAckCursors({ claim, liveSeq: 1 });
       const placementStore = createWorkerSessionPlacementGate(placements, {
         rejectExistingWorkerClaims: owner === "recovery-only",
       });
@@ -139,7 +139,7 @@ describe("worker environment owner revocation", () => {
         status: () => "connected" as const,
         start: vi.fn(),
         stop: vi.fn(async () => {
-          expect(placements.listPendingWorkspaceResults()).toMatchObject([
+          expect(await placements.listPendingWorkspaceResultsAsync()).toMatchObject([
             { sessionId: SESSION_ID, recoveryRequestedAtMs: expect.any(Number) },
           ]);
         }),
@@ -155,7 +155,7 @@ describe("worker environment owner revocation", () => {
         .reconcileOnce();
 
       expect(tunnelManager.stop).toHaveBeenCalledTimes(owner === "recovery-only" ? 1 : 0);
-      expect(placements.listPendingWorkspaceResults()).toMatchObject([
+      expect(await placements.listPendingWorkspaceResultsAsync()).toMatchObject([
         {
           sessionId: SESSION_ID,
           recoveryRequestedAtMs: owner === "recovery-only" ? expect.any(Number) : null,

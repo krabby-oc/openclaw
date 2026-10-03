@@ -101,7 +101,6 @@ export async function finishGatewayStartup(params: {
     authRateLimiter,
     browserAuthRateLimiter,
     nodeReapprovalCoordinator,
-    preauthHandshakeTimeoutMs,
     isGatewayStartupPending,
     attachedGatewayExtraHandlers,
     startListening,
@@ -120,10 +119,8 @@ export async function finishGatewayStartup(params: {
     prepareAttachedPluginRuntime,
     refreshAttachedGatewayDiscovery,
     wss,
-    httpBindHosts,
     startChannels,
     broadcastPluginEvent,
-    controlUiBasePath,
     controlUiRootLifecycle,
     sidecarStartup,
     startEarlyRuntime,
@@ -131,7 +128,6 @@ export async function finishGatewayStartup(params: {
     preauthConnectionBudget,
     releaseStartupAccountStarts,
     cronReconciliation,
-    postReadyState,
     cronStartState,
     prepareReloadCandidate,
     configSnapshot,
@@ -173,9 +169,9 @@ export async function finishGatewayStartup(params: {
       rateLimiter: authRateLimiter,
       browserRateLimiter: browserAuthRateLimiter,
       nodeReapprovalCoordinator,
-      preauthHandshakeTimeoutMs,
       isStartupPending: isGatewayStartupPending,
       isPendingWorkerNodeSetup: workerEnvironmentService?.hasPendingNodeEnrollmentSetup,
+      admitsNodeSetupCompletion: workerEnvironmentService?.admitsNodeSetupCompletion,
       gatewayMethods: runtimeState.gatewayMethods,
       events: GATEWAY_EVENTS,
       logGateway: log,
@@ -219,6 +215,7 @@ export async function finishGatewayStartup(params: {
         return;
       }
       const activated = gatewayRuntimeServices.activateGatewayScheduledServices({
+        scheduler: runtime.scheduler,
         minimalTestGateway,
         cfgAtStart,
         deps,
@@ -244,21 +241,18 @@ export async function finishGatewayStartup(params: {
     startupTrace.measure("runtime.post-attach", () =>
       loadGatewayStartupPostAttachModule().then(({ startGatewayPostAttachRuntime }) =>
         startGatewayPostAttachRuntime({
+          scheduler: runtime.scheduler,
           minimalTestGateway,
           updateCanary: opts.updateCanary,
           cfgAtStart,
           getConfig: getRuntimeConfig,
-          bindHost,
-          bindHosts: httpBindHosts,
           port,
-          tlsEnabled: gatewayTls.enabled,
           log,
           isNixMode,
           startupStartedAt: opts.startupStartedAt,
           broadcastToConnIds,
           getClientConnIds: gatewayRequestContext.getClientConnIds!,
           broadcastPluginEvent,
-          controlUiBasePath,
           controlUiRootLifecycle,
           gatewayPluginConfigAtStart,
           activationSourceConfig: startupActivationSourceConfig,
@@ -303,24 +297,34 @@ export async function finishGatewayStartup(params: {
             startupState.pendingReason = "startup-sidecars";
           },
           onStartupPluginsLoaded: async (loaded) => {
-            const prepared = await prepareAttachedPluginRuntime(loaded);
-            if (
-              lifecycle.closePreludeStarted ||
-              !startupPluginRuntimeClaim.publish(prepared.publish)
-            ) {
-              return false;
-            }
-            startupState.pendingReason = "startup-sidecars";
-            prepared.afterCommit();
-            // Nodes can finish their handshake before deferred plugins attach.
-            const nodeCapabilitySurfaces = indexPluginNodeCapabilitySurfaces(
-              getPluginNodeCapabilities(),
+            const activationCleanup: Promise<void>[] = [];
+            const prepared = await prepareAttachedPluginRuntime(loaded, (completion) =>
+              activationCleanup.push(completion),
             );
-            for (const client of clients) {
-              reconcileClientPluginNodeCapabilities(client, nodeCapabilitySurfaces);
+            try {
+              if (
+                lifecycle.closePreludeStarted ||
+                !startupPluginRuntimeClaim.publish(prepared.publish)
+              ) {
+                return false;
+              }
+              startupState.pendingReason = "startup-sidecars";
+              prepared.afterCommit();
+              // Nodes can finish their handshake before deferred plugins attach.
+              const nodeCapabilitySurfaces = indexPluginNodeCapabilitySurfaces(
+                getPluginNodeCapabilities(),
+              );
+              for (const client of clients) {
+                reconcileClientPluginNodeCapabilities(client, nodeCapabilitySurfaces);
+              }
+              await refreshAttachedGatewayDiscovery(
+                loaded.pluginRegistry,
+                startupPluginRuntimeClaim,
+              );
+              return true;
+            } finally {
+              await Promise.allSettled(activationCleanup);
             }
-            await refreshAttachedGatewayDiscovery(loaded.pluginRegistry, startupPluginRuntimeClaim);
-            return true;
           },
           getCronService: kernel.getCronService,
           onChannelsStarted: () => {
@@ -425,15 +429,14 @@ export async function finishGatewayStartup(params: {
     });
   };
   const tlsRenewal = startGatewayTlsRenewal({
+    scheduler: runtime.scheduler,
     runtime: gatewayTls,
     servers: runtime.httpServers,
     enabled: cfgAtStart.gateway?.reload?.mode !== "off",
-    isClosing: () => lifecycle.closePreludeStarted,
-    onRenewed: async () => {
-      await runtimeState.discovery?.update({
+    onRenewed: async () =>
+      runtimeState.discovery?.update({
         gatewayTlsFingerprintSha256: gatewayTls.fingerprintSha256,
-      });
-    },
+      }),
     log: log.child("tls"),
   });
   if (tlsRenewal) {
@@ -442,6 +445,7 @@ export async function finishGatewayStartup(params: {
   let appliedCustomPluginUiEnabled =
     gatewayPluginConfigAtStart.gateway?.controlUi?.experimental?.customPlugins === true;
   const configReloaderParams: Parameters<typeof startManagedGatewayConfigReloader>[0] = {
+    scheduler: runtime.scheduler,
     onReloadEnabledChange: tlsRenewal?.setEnabled,
     configRevisionProjector: gatewayRequestContext.configRevisionProjector,
     resolveGatewayContext: resolvePluginGatewayContext,
@@ -508,7 +512,7 @@ export async function finishGatewayStartup(params: {
     getState: kernel.getReloadState,
     setState: (nextState) => {
       kernel.setReloadHookState(nextState);
-      kernel.swapHeartbeatRunner(nextState.heartbeatRunner);
+      kernel.setHeartbeatRunner(nextState.heartbeatRunner);
       const previousCronState = kernel.swapCronState(nextState.cronState);
       if (previousCronState !== nextState.cronState) {
         cronStartState.handled = true;
@@ -613,12 +617,11 @@ export async function finishGatewayStartup(params: {
   });
   if (!minimalTestGateway) {
     const gatewayRuntimeServices = await loadScheduledServicesModule();
-    postReadyState.maintenanceTimer = gatewayRuntimeServices.scheduleGatewayPostReadyMaintenance({
+    gatewayRuntimeServices.scheduleGatewayPostReadyMaintenance({
+      scheduler: runtime.scheduler,
+      signal: runtime.connectionWork.signal,
       delayMs: POST_READY_MAINTENANCE_DELAY_MS,
       isClosing: () => lifecycle.closePreludeStarted,
-      onStarted: () => {
-        postReadyState.maintenanceTimer = null;
-      },
       startMaintenance: async () => {
         await params.waitForPostReadyWork();
         if (lifecycle.closePreludeStarted) {
@@ -663,6 +666,8 @@ export async function finishGatewayStartup(params: {
     ];
     registerGatewayLifetimeSidecars(
       gatewayRuntimeServices.scheduleGatewayIdleTask({
+        id: "maintenance:retained-plugin-generations",
+        scheduler: runtime.scheduler,
         delayMs: RETAINED_PLUGIN_CLEANUP_DELAY_MS,
         retryDelayMs: RETAINED_PLUGIN_CLEANUP_DELAY_MS,
         isClosing: () => lifecycle.closePreludeStarted,
@@ -678,6 +683,8 @@ export async function finishGatewayStartup(params: {
     );
     registerGatewayLifetimeSidecars(
       gatewayRuntimeServices.scheduleGatewayIdleTask({
+        id: "maintenance:sqlite-snapshots",
+        scheduler: runtime.scheduler,
         delayMs: RETAINED_PLUGIN_CLEANUP_DELAY_MS,
         retryDelayMs: RETAINED_PLUGIN_CLEANUP_DELAY_MS,
         isClosing: () => lifecycle.closePreludeStarted,

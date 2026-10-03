@@ -1,6 +1,5 @@
-// Provider operation retry helpers run retryable provider operations with backoff.
 import { sleepWithAbort } from "../infra/backoff.js";
-import { formatErrorMessage, readErrorCause } from "../infra/errors.js";
+import { formatErrorMessage, readErrorCause, readErrorName } from "../infra/errors.js";
 import { hasRetryableConnectionErrorCode } from "../infra/retryable-network-errors.js";
 
 export type ProviderOperationRetryStage = "read" | "poll" | "download" | "create";
@@ -47,30 +46,11 @@ export function resolveTransientProviderRetryOptions(
   return options;
 }
 
-function defaultTransientProviderRetryForStage(
-  stage: ProviderOperationRetryStage,
-): TransientProviderRetryConfig | undefined {
-  return stage === "create" ? undefined : true;
-}
-
 export function providerOperationRetryConfig(
   stage: ProviderOperationRetryStage,
   options?: TransientProviderRetryConfig,
 ): TransientProviderRetryConfig | undefined {
-  return options ?? defaultTransientProviderRetryForStage(stage);
-}
-
-function readErrorName(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null) {
-    return undefined;
-  }
-  const name = (error as { name?: unknown }).name;
-  return typeof name === "string" ? name : undefined;
-}
-
-function isTimeoutNamedError(error: unknown): boolean {
-  const name = readErrorName(error);
-  return name === "TimeoutError" || name === "RequestTimeoutError";
+  return options ?? (stage === "create" ? undefined : true);
 }
 
 function readErrorStatus(error: unknown): number | undefined {
@@ -105,7 +85,7 @@ function hasProviderRetryableNetworkCode(value: string): boolean {
   return hasRetryableConnectionErrorCode(value) || PROVIDER_RETRYABLE_DNS_ERROR_CODE_RE.test(value);
 }
 
-function hasTransientNetworkSignal(error: unknown, message: string): boolean {
+function hasTransientNetworkOrTimeoutSignal(error: unknown, message: string): boolean {
   if (hasProviderRetryableNetworkCode(message)) {
     return true;
   }
@@ -113,34 +93,11 @@ function hasTransientNetworkSignal(error: unknown, message: string): boolean {
   if (code && hasProviderRetryableNetworkCode(code)) {
     return true;
   }
-  const cause = readErrorCause(error);
-  if (!cause || cause === error) {
-    return false;
-  }
-  const causeCode = readErrorCode(cause);
-  if (causeCode && hasProviderRetryableNetworkCode(causeCode)) {
-    return true;
-  }
-  const causeMessage = formatErrorMessage(cause);
-  return hasProviderRetryableNetworkCode(causeMessage);
-}
-
-function hasTimeoutSignal(error: unknown, message: string): boolean {
-  if (isTimeoutNamedError(error)) {
-    return true;
-  }
-  if (/\b(?:request timeout|provider timeout|timed out|timeout)\b/i.test(message)) {
-    return true;
-  }
-  const cause = readErrorCause(error);
-  if (!cause || cause === error) {
-    return false;
-  }
-  if (isTimeoutNamedError(cause)) {
-    return true;
-  }
-  return /\b(?:request timeout|provider timeout|timed out|timeout)\b/i.test(
-    formatErrorMessage(cause),
+  const name = readErrorName(error);
+  return (
+    name === "TimeoutError" ||
+    name === "RequestTimeoutError" ||
+    /\b(?:request timeout|provider timeout|timed out|timeout)\b/i.test(message)
   );
 }
 
@@ -169,16 +126,15 @@ function isTransientProviderOperationError(error: unknown, message: string): boo
   if (/\b(?:HTTP\s*)?(?:429|500|502|503|504)\b/i.test(message)) {
     return true;
   }
-  if (hasTransientNetworkSignal(error, message)) {
+  if (hasTransientNetworkOrTimeoutSignal(error, message)) {
     return true;
   }
-  if (hasTimeoutSignal(error, message)) {
-    return true;
-  }
-  if (/\bfetch failed\b/i.test(message)) {
-    return hasTransientNetworkSignal(error, message);
-  }
-  return false;
+  const cause = readErrorCause(error);
+  return Boolean(
+    cause &&
+    cause !== error &&
+    hasTransientNetworkOrTimeoutSignal(cause, formatErrorMessage(cause)),
+  );
 }
 
 export function resolveTransientProviderAttempts(options?: TransientProviderRetryOptions): number {
@@ -254,15 +210,12 @@ export async function executeProviderOperationWithRetry<T>(params: {
     ? { ...resolvedRetryOptions, ...(retrySignal ? { signal: retrySignal } : {}) }
     : undefined;
   const maxAttempts = resolveTransientProviderAttempts(retryOptions);
-  let lastError: unknown;
-
-  for (let attemptNumber = 1; attemptNumber <= maxAttempts; attemptNumber += 1) {
+  for (let attemptNumber = 1; ; attemptNumber += 1) {
     retrySignal?.throwIfAborted();
     try {
       return await params.operation();
     } catch (error) {
       retrySignal?.throwIfAborted();
-      lastError = error;
       const message = formatErrorMessage(error);
       if (
         !retryOptions ||
@@ -285,6 +238,4 @@ export async function executeProviderOperationWithRetry<T>(params: {
       await sleep(delayMs, retryOptions.signal);
     }
   }
-
-  throw lastError;
 }

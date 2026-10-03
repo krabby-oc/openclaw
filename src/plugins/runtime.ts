@@ -28,6 +28,7 @@ import {
   preparePluginRunContextCleanup,
   publishPluginSessionSchedulerJobs,
 } from "./host-hook-runtime.js";
+import { notifyPluginHttpRoutesChanged } from "./http-route-owner.js";
 import { pluginInstanceInvocation } from "./plugin-instance-invocation.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
 import { settlePreparedMessageToolCatalog } from "./prepared-message-tool-catalog.js";
@@ -397,6 +398,7 @@ function installActivePluginRegistry(
       return installedVersion;
     }
     syncPluginAgentEventBridge();
+    notifyPluginHttpRoutesChanged();
   } catch (error) {
     if (params.retirePrevious === false && isCurrent()) {
       rollbackStagedPluginRegistry(previousSnapshot);
@@ -438,6 +440,7 @@ export function createPluginRegistryOwner(registry: PluginRegistry, workspaceDir
       const previous = owner.activeRegistry;
       Object.assign(owner, captureActivePluginRegistrySnapshot());
       bindPluginRegistryGatewayOwner(next, gatewayOwner);
+      notifyPluginHttpRoutesChanged();
       retirePluginRegistryIfUnused(previous, () =>
         registryOwners.has(owner) ? owner.activeRegistry : null,
       );
@@ -475,7 +478,11 @@ export function createPluginRegistryOwner(registry: PluginRegistry, workspaceDir
           };
           let memoryErrors: readonly unknown[] = [];
           try {
-            if (previous.memoryCapabilities.some(({ capability }) => capability.runtime)) {
+            if (
+              previous.memoryCapabilities.some(
+                ({ capability }) => capability.runtime || capability.providerRuntime,
+              )
+            ) {
               const { prepareMemoryRuntimeReload } = await loadMemoryRuntime();
               const memory = prepareMemoryRuntimeReload(previous, retainedMemory());
               memoryErrors = (await memory.close()).errors;
@@ -600,10 +607,6 @@ export function requireActivePluginChannelRegistry(): PluginRegistry {
 
 export function getActivePluginRegistryKey(): string | null {
   return state.key;
-}
-
-export function getActivePluginRuntimeSubagentMode(): "default" | "explicit" | "gateway-bindable" {
-  return state.runtimeSubagentMode;
 }
 
 export function getActivePluginRegistryVersion(): number {

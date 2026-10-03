@@ -1,24 +1,15 @@
-// Config evaluation helpers load dynamic config modules with guarded evaluation.
 import fs from "node:fs";
 import path from "node:path";
 import { isBlockedObjectKey } from "../infra/prototype-keys.js";
 import { getOrCreatePromise } from "./lazy-promise.js";
+import type { RequirementsMetadata } from "./requirements.js";
 
 /** Normalizes primitive config values into the truthiness rules used by requirements checks. */
 function isTruthy(value: unknown): boolean {
-  if (value === undefined || value === null) {
-    return false;
-  }
-  if (typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "number") {
-    return value !== 0;
-  }
   if (typeof value === "string") {
     return value.trim().length > 0;
   }
-  return true;
+  return value !== undefined && value !== null && value !== false && value !== 0;
 }
 
 /** Resolves dotted config paths, tolerating extra dots and missing branches. */
@@ -61,93 +52,52 @@ export function isConfigPathTruthyWithDefaults(
   return isTruthy(value);
 }
 
-type RuntimeRequires = {
-  bins?: string[];
-  anyBins?: string[];
-  env?: string[];
-  config?: string[];
-};
-
-type RuntimeRequirementEvalParams = {
-  requires?: RuntimeRequires;
-  hasBin: (bin: string) => boolean;
-  hasAnyRemoteBin?: (bins: string[]) => boolean;
-  hasRemoteBin?: (bin: string) => boolean;
-  hasEnv: (envName: string) => boolean;
-  isConfigPathTruthy: (pathStr: string) => boolean;
-};
-
-/** Evaluates binary/env/config requirements against local and optional remote capabilities. */
-function evaluateRuntimeRequires(params: RuntimeRequirementEvalParams): boolean {
-  const requires = params.requires;
-  if (!requires) {
-    return true;
-  }
-
-  const requiredEnv = requires.env ?? [];
-  if (requiredEnv.length > 0) {
-    for (const envName of requiredEnv) {
-      if (!params.hasEnv(envName)) {
-        return false;
-      }
-    }
-  }
-
-  const requiredConfig = requires.config ?? [];
-  if (requiredConfig.length > 0) {
-    for (const configPath of requiredConfig) {
-      if (!params.isConfigPathTruthy(configPath)) {
-        return false;
-      }
-    }
-  }
-
-  const requiredBins = requires.bins ?? [];
-  if (requiredBins.length > 0) {
-    for (const bin of requiredBins) {
-      if (params.hasBin(bin)) {
-        continue;
-      }
-      if (params.hasRemoteBin?.(bin)) {
-        continue;
-      }
-      return false;
-    }
-  }
-
-  const requiredAnyBins = requires.anyBins ?? [];
-  if (requiredAnyBins.length > 0) {
-    const anyFound = requiredAnyBins.some((bin) => params.hasBin(bin));
-    if (!anyFound && !params.hasAnyRemoteBin?.(requiredAnyBins)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
 /** Enforces OS compatibility before allowing `always` to bypass runtime requirements. */
 export function evaluateRuntimeEligibility(
-  params: {
-    os?: string[];
+  params: RequirementsMetadata & {
     platform?: string;
     remotePlatforms?: string[];
     always?: boolean;
-  } & RuntimeRequirementEvalParams,
+    hasBin: (bin: string) => boolean;
+    hasAnyRemoteBin?: (bins: string[]) => boolean;
+    hasRemoteBin?: (bin: string) => boolean;
+    hasEnv: (envName: string) => boolean;
+    isConfigPathTruthy: (pathStr: string) => boolean;
+  },
 ): boolean {
   const osList = params.os ?? [];
-  const remotePlatforms = params.remotePlatforms ?? [];
   if (
     osList.length > 0 &&
     !osList.includes(params.platform ?? process.platform) &&
-    !remotePlatforms.some((platform) => osList.includes(platform))
+    !params.remotePlatforms?.some((platform) => osList.includes(platform))
   ) {
     return false;
   }
-  if (params.always === true) {
+  const requires = params.requires;
+  if (params.always === true || !requires) {
     return true;
   }
-  return evaluateRuntimeRequires(params);
+  for (const envName of requires.env ?? []) {
+    if (!params.hasEnv(envName)) {
+      return false;
+    }
+  }
+  for (const configPath of requires.config ?? []) {
+    if (!params.isConfigPathTruthy(configPath)) {
+      return false;
+    }
+  }
+  for (const bin of requires.bins ?? []) {
+    if (!params.hasBin(bin) && !params.hasRemoteBin?.(bin)) {
+      return false;
+    }
+  }
+  const requiredAnyBins = requires.anyBins ?? [];
+  return (
+    requiredAnyBins.length === 0 ||
+    requiredAnyBins.some((bin) => params.hasBin(bin)) ||
+    Boolean(params.hasAnyRemoteBin?.(requiredAnyBins))
+  );
 }
 
 function windowsPathExtensions(raw: string | undefined): string[] {

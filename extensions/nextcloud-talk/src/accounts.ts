@@ -1,4 +1,3 @@
-// Nextcloud Talk plugin module implements accounts behavior.
 import {
   DEFAULT_ACCOUNT_ID,
   hasConfiguredAccountValue,
@@ -52,7 +51,7 @@ const {
     );
   },
 });
-export { resolveDefaultNextcloudTalkAccountId };
+export { mergeNextcloudTalkAccountConfig, resolveDefaultNextcloudTalkAccountId };
 
 export function listNextcloudTalkAccountIds(cfg: CoreConfig): string[] {
   const ids = listNextcloudTalkAccountIdsInternal(cfg);

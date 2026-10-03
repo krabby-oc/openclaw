@@ -6,8 +6,8 @@ import {
   toStringifiedError,
 } from "@openclaw/normalization-core/error-coercion";
 import {
-  parseStrictPositiveInteger,
   resolveIntegerOption,
+  resolvePositiveTimerTimeoutMs,
 } from "@openclaw/normalization-core/number-coercion";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import type { Command } from "commander";
@@ -16,7 +16,6 @@ import {
   GATEWAY_CLIENT_NAMES,
 } from "../../packages/gateway-protocol/src/client-info.js";
 import { readConnectPairingRequiredMessage } from "../../packages/gateway-protocol/src/connect-error-details.js";
-import { formatDocsLink } from "../../packages/terminal-core/src/links.js";
 import { clearActiveProgressLine } from "../../packages/terminal-core/src/progress-line.js";
 import { createSafeStreamWriter } from "../../packages/terminal-core/src/stream-writer.js";
 import { colorize, isRich, theme } from "../../packages/terminal-core/src/theme.js";
@@ -38,6 +37,8 @@ import { formatCliCommand } from "./command-format.js";
 import { resolveGatewayLocalPortOverride } from "./gateway-port-option.js";
 import { addGatewayClientOptions, callGatewayFromCli } from "./gateway-rpc.js";
 import type { GatewayRpcOpts } from "./gateway-rpc.types.js";
+import { formatDocsHelp } from "./help-format.js";
+import { parseLogsPositiveInt } from "./logs-cli.options.js";
 
 type LogsTailPayload = {
   file?: string;
@@ -77,15 +78,6 @@ type GatewayRecoveryState =
     }
   | { kind: "settled"; result: GatewayRecoveryResult };
 
-type LogSourceIdentity = {
-  file?: string;
-  source?: string;
-  sourceKind?: LogsTailPayload["sourceKind"];
-  servicePid?: number;
-  serviceUnit?: string;
-  localFallback?: boolean;
-};
-
 type LogsCliOptions = GatewayRpcOpts & {
   limit?: string;
   maxBytes?: string;
@@ -109,17 +101,6 @@ const JOURNAL_CURSOR_PREFIX = "-- cursor: ";
 const JOURNAL_MAX_LIMIT = 5000;
 const JOURNAL_MAX_BYTES = 1_000_000;
 
-function parsePositiveInt(value: string | undefined, fallback: number, flag: string): number {
-  if (value === undefined) {
-    return fallback;
-  }
-  const parsed = parseStrictPositiveInteger(value);
-  if (parsed === undefined) {
-    throw new Error(`${flag} must be a positive integer.`);
-  }
-  return parsed;
-}
-
 function normalizeLogTailPayloadSource(payload: LogsTailPayload): LogsTailPayload {
   if (payload.sourceKind || !payload.file) {
     return payload;
@@ -132,15 +113,14 @@ function buildLogSourceIdentity(payload: LogsTailPayload): string | undefined {
   if (!sourceKind && !payload.file && !payload.source) {
     return undefined;
   }
-  const identity: LogSourceIdentity = {
+  return JSON.stringify({
     file: payload.file,
     source: payload.source,
     sourceKind,
     servicePid: payload.service?.pid,
     serviceUnit: payload.service?.unit,
     localFallback: payload.localFallback === true ? true : undefined,
-  };
-  return JSON.stringify(identity);
+  });
 }
 
 function buildLogMetaRecord(payload: LogsTailPayload): Record<string, unknown> {
@@ -254,15 +234,11 @@ function isLocalGatewayRpcUnavailableError(error: unknown): boolean {
     return true;
   }
   // GatewayClient pending request failures are still plain Error instances.
-  return isPlainGatewayRequestCloseError(message) || isPlainGatewayRequestTimeoutError(message);
+  return isPlainGatewayRequestUnavailableError(message);
 }
 
-function isPlainGatewayRequestCloseError(message: string): boolean {
-  return message.startsWith("gateway closed (");
-}
-
-function isPlainGatewayRequestTimeoutError(message: string): boolean {
-  return /^gateway timeout after \d+ms\b/u.test(message);
+function isPlainGatewayRequestUnavailableError(message: string): boolean {
+  return message.startsWith("gateway closed (") || /^gateway timeout after \d+ms\b/u.test(message);
 }
 
 async function readSystemdJournalFallback(params: {
@@ -386,7 +362,7 @@ function isTransientFollowError(error: unknown): boolean {
   if (readConnectPairingRequiredMessage(message)) {
     return false;
   }
-  return isPlainGatewayRequestCloseError(message) || isPlainGatewayRequestTimeoutError(message);
+  return isPlainGatewayRequestUnavailableError(message);
 }
 
 function formatLogTimestamp(value?: string, mode: "pretty" | "plain" = "plain", localTime = true) {
@@ -419,7 +395,6 @@ function formatLogLine(
   const label = parsed.subsystem ?? parsed.module ?? parsed.plugin ?? "";
   const time = formatLogTimestamp(parsed.time, opts.pretty ? "pretty" : "plain", opts.localTime);
   const level = parsed.level ?? "";
-  const levelLabel = level.padEnd(5).trim();
   const message = parsed.message || parsed.raw;
 
   if (!opts.pretty) {
@@ -436,7 +411,7 @@ function formatLogLine(
         : level === "debug" || level === "trace"
           ? theme.muted
           : theme.info;
-  const levelValue = colorize(opts.rich, levelStyle, levelLabel);
+  const levelValue = colorize(opts.rich, levelStyle, level);
   const messageValue = colorize(opts.rich, levelStyle, message);
 
   const head = [timeLabel, levelValue, labelValue].filter(Boolean).join(" ");
@@ -518,11 +493,7 @@ export function registerLogsCli(program: Command) {
     .option("--no-color", "Disable ANSI colors")
     .option("--local-time", "Display timestamps in local timezone (default)", false)
     .option("--utc", "Display timestamps in UTC", false)
-    .addHelpText(
-      "after",
-      () =>
-        `\n${theme.muted("Docs:")} ${formatDocsLink("/cli/logs", "docs.openclaw.ai/cli/logs")}\n`,
-    );
+    .addHelpText("after", () => formatDocsHelp("/cli/logs"));
 
   addGatewayClientOptions(logs);
 
@@ -554,9 +525,12 @@ export function registerLogsCli(program: Command) {
       }
     };
     const { logLine, errorLine, emitJsonLine } = createLogWriters(abortGatewayRecoveryProbe);
-    const interval = parsePositiveInt(opts.interval, 1000, "--interval");
-    const limit = parsePositiveInt(opts.limit, 200, "--limit");
-    const maxBytes = parsePositiveInt(opts.maxBytes, 250_000, "--max-bytes");
+    const interval = resolvePositiveTimerTimeoutMs(
+      parseLogsPositiveInt(opts.interval, 1000, "--interval"),
+      1000,
+    );
+    const limit = parseLogsPositiveInt(opts.limit, 200, "--limit");
+    const maxBytes = parseLogsPositiveInt(opts.maxBytes, 250_000, "--max-bytes");
     let gatewayCursor: number | undefined;
     let journalCursor: string | undefined;
     let journalSince: string | undefined;
@@ -569,6 +543,10 @@ export function registerLogsCli(program: Command) {
     const pretty = !jsonMode && process.stdout.isTTY && !opts.plain;
     const rich = isRich() && opts.color !== false && !opts.plain;
     const localTime = !opts.utc;
+    const emitConnectionNotice = (message: string, style: (value: string) => string) =>
+      jsonMode
+        ? emitJsonLine({ type: "notice", message }, true)
+        : errorLine(colorize(rich, style, message));
 
     const startGatewayRecoveryProbe = () => {
       if (!preferJournal || gatewayRecovery.kind !== "idle") {
@@ -655,11 +633,7 @@ export function registerLogsCli(program: Command) {
           followRetryAttempt += 1;
           const backoffMs = computeBackoff(FOLLOW_BACKOFF_POLICY, followRetryAttempt);
           const message = `[logs] gateway disconnected, reconnecting in ${Math.round(backoffMs / 1_000)}s...`;
-          if (jsonMode) {
-            if (!emitJsonLine({ type: "notice", message }, true)) {
-              return;
-            }
-          } else if (!errorLine(colorize(rich, theme.warn, message))) {
+          if (!emitConnectionNotice(message, theme.warn)) {
             return;
           }
           await delay(backoffMs);
@@ -680,15 +654,11 @@ export function registerLogsCli(program: Command) {
         });
         return;
       }
-      if (followRetryAttempt > 0) {
-        const message = "[logs] gateway reconnected";
-        if (jsonMode) {
-          if (!emitJsonLine({ type: "notice", message }, true)) {
-            return;
-          }
-        } else if (!errorLine(colorize(rich, theme.muted, message))) {
-          return;
-        }
+      if (
+        followRetryAttempt > 0 &&
+        !emitConnectionNotice("[logs] gateway reconnected", theme.muted)
+      ) {
+        return;
       }
       followRetryAttempt = 0;
       payload = normalizeLogTailPayloadSource(payload);

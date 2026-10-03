@@ -1,6 +1,9 @@
+import type {
+  QaBusInboundMessageInput,
+  QaBusOutboundMessageInput,
+} from "openclaw/plugin-sdk/qa-channel-protocol";
 import { describe, expect, it } from "vitest";
 import { createQaBusState } from "./bus-state.js";
-import type { QaBusInboundMessageInput, QaBusOutboundMessageInput } from "./runtime-api.js";
 import { runLoadedScenarioFlow } from "./scenario-flow-runner.test-support.js";
 import { waitForOutboundMessage } from "./suite-runtime-transport.js";
 
@@ -11,8 +14,8 @@ const retryRequest = { allInputText: `${rawMarker}: you did not call message(act
 async function runStrandedRetryFailureFlow(
   options: {
     outbound?: Partial<QaBusOutboundMessageInput>;
-    duplicate?: "immediate" | "settled";
-    leakRaw?: "immediate" | "settled";
+    duplicate?: boolean;
+    leakRaw?: boolean;
     extraRetry?: "immediate" | "settled";
   } = {},
 ) {
@@ -41,12 +44,6 @@ async function runStrandedRetryFailureFlow(
         sendInbound: async (input: QaBusInboundMessageInput) => {
           const inbound = state.addInboundMessage(input);
           state.addOutboundMessage(outbound);
-          if (options.duplicate === "immediate") {
-            state.addOutboundMessage(outbound);
-          }
-          if (options.leakRaw === "immediate") {
-            state.addOutboundMessage({ ...outbound, text: rawMarker });
-          }
           return inbound;
         },
       },
@@ -60,10 +57,10 @@ async function runStrandedRetryFailureFlow(
             : requests,
       sleep: async () => {
         settled = true;
-        if (options.duplicate === "settled") {
+        if (options.duplicate) {
           state.addOutboundMessage(outbound);
         }
-        if (options.leakRaw === "settled") {
+        if (options.leakRaw) {
           state.addOutboundMessage({ ...outbound, text: rawMarker });
         }
       },
@@ -94,23 +91,13 @@ describe("stranded-final retry failure scenario", () => {
 
   it.each([
     {
-      label: "immediate duplicate",
-      options: { duplicate: "immediate" as const },
-      failure: "expected exactly one sanitized diagnostic, saw 2",
-    },
-    {
       label: "late duplicate",
-      options: { duplicate: "settled" as const },
+      options: { duplicate: true },
       failure: "expected exactly one sanitized diagnostic, saw 2",
-    },
-    {
-      label: "immediate private text leak",
-      options: { leakRaw: "immediate" as const },
-      failure: "raw stranded final text must not be delivered",
     },
     {
       label: "late private text leak",
-      options: { leakRaw: "settled" as const },
+      options: { leakRaw: true },
       failure: "raw stranded final text must not be delivered",
     },
     {

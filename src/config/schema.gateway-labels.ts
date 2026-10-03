@@ -1,4 +1,3 @@
-// Defines the Gateway config labels exposed by schema metadata.
 export const GATEWAY_FIELD_LABELS: Record<string, string> = {
   gateway: "Gateway",
   "gateway.port": "Gateway Port",
@@ -29,6 +28,8 @@ export const GATEWAY_FIELD_LABELS: Record<string, string> = {
   "gateway.controlUi.allowedOrigins": "Control UI Allowed Origins",
   "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback":
     "Dangerously Allow Host-Header Origin Fallback",
+  "gateway.uploads": "File and Image Uploads",
+  "gateway.uploads.enabled": "Uploads Enabled",
   "gateway.cliAgents": "CLI Agents",
   "gateway.cliAgents.enabled": "CLI Agents Enabled",
   "gateway.terminal": "Operator Terminal",
@@ -51,6 +52,9 @@ export const GATEWAY_FIELD_LABELS: Record<string, string> = {
   "gateway.auth.trustedProxy.deviceAutoApprove.scopes": "Trusted Proxy Device Auto-Approval Scopes",
   "gateway.roles": "Gateway Operator Roles",
   "gateway.roles.default": "Default Operator Role",
+  "gateway.roles.assignments": "Operator Role Assignments",
+  "gateway.roles.assignments.byGithubLogin": "Operator Roles by GitHub Login",
+  "gateway.roles.assignments.byGithubLogin.*": "GitHub Login Operator Role",
   "gateway.roles.definitions": "Operator Role Definitions",
   "gateway.roles.definitions.*": "Operator Role Definition",
   "gateway.roles.definitions.*.sessions": "Operator Role Session Access",

@@ -7,18 +7,6 @@ import type {
 } from "../../agents/sessions/session-manager-types.js";
 import { MIN_READABLE_SESSION_VERSION } from "./version.js";
 
-const sessionEntryTypeSchema = z.enum([
-  "message",
-  "thinking_level_change",
-  "model_change",
-  "compaction",
-  "reset",
-  "branch_summary",
-  "custom",
-  "custom_message",
-  "label",
-  "session_info",
-]);
 const readableContentSchema = z.union([z.string(), z.array(z.looseObject({ type: z.string() }))]);
 const readableMessageSchema = z.discriminatedUnion("role", [
   z.looseObject({ role: z.literal("user"), content: readableContentSchema }),
@@ -106,6 +94,9 @@ const indexedSessionEntrySchema = z.discriminatedUnion("type", [
     name: z.string().optional(),
   }),
 ]);
+const sessionEntryTypeSchema = z.enum(
+  indexedSessionEntrySchema.options.flatMap((entry) => [...entry.shape.type.values]),
+);
 const parentLinkedOpaqueEntrySchema = z.looseObject({
   type: z
     .unknown()
@@ -142,10 +133,6 @@ export function assertCurrentSessionTranscriptHeader(header: SessionHeader | und
   }
 }
 
-function isSessionEntryType(type: unknown): boolean {
-  return sessionEntryTypeSchema.safeParse(type).success;
-}
-
 export function isIndexedSessionEntry(entry: unknown): entry is SessionEntry {
   return indexedSessionEntrySchema.safeParse(entry).success;
 }
@@ -154,19 +141,15 @@ function isReadableContent(value: unknown): boolean {
   return readableContentSchema.safeParse(value).success;
 }
 
-function isReadableMessage(value: unknown): boolean {
-  return readableMessageSchema.safeParse(value).success;
-}
-
 function isReadableLegacySessionEntry(value: unknown): value is FileEntry {
   const message = isRecord(value) && value.type === "message" ? value.message : undefined;
   return (
     isRecord(value) &&
-    isSessionEntryType(value.type) &&
+    sessionEntryTypeSchema.safeParse(value.type).success &&
     (value.type !== "message" ||
       (isRecord(message) && message.role === "hookMessage"
         ? isReadableContent(message.content)
-        : isReadableMessage(message)))
+        : readableMessageSchema.safeParse(message).success))
   );
 }
 

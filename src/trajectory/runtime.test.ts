@@ -22,6 +22,7 @@ import {
 import { runOpenClawAgentWorkerWrite } from "../state/openclaw-agent-write-admission.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { TRAJECTORY_RUNTIME_EVENT_MAX_BYTES } from "./paths.js";
+import * as runtimeStoreWriter from "./runtime-store-writer.js";
 import {
   loadSqliteTrajectoryRuntimeEvents,
   loadSqliteTrajectoryRuntimeEventRowsSync,
@@ -33,6 +34,7 @@ type TrajectoryRuntimeRecorder = NonNullable<ReturnType<typeof createTrajectoryR
 const tempDirs = createTempDirTracker();
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
   await closeOpenClawAgentDatabasesAsync();
   closeOpenClawAgentDatabasesForTest();
@@ -50,24 +52,26 @@ function expectTrajectoryRuntimeRecorder(
   return recorder;
 }
 
-function createCapturedRuntimeRecorder(writes: string[]) {
+function createCapturedRuntimeRecorder(
+  writes: string[],
+  params?: Partial<Parameters<typeof createTrajectoryRuntimeRecorder>[0]>,
+) {
+  vi.spyOn(runtimeStoreWriter, "createSqliteTrajectoryRuntimeSink").mockReturnValueOnce({
+    write: (_event, line) => writes.push(line),
+    flush: async () => {},
+    describeFlushState: () => undefined,
+  });
   return createTrajectoryRuntimeRecorder({
     sessionId: "session-1",
     sessionFile: "/tmp/session.jsonl",
-    writer: {
-      filePath: "/tmp/session.trajectory.jsonl",
-      write: (line) => {
-        writes.push(line);
-      },
-      flush: async () => undefined,
-    },
+    ...params,
   });
 }
 
 describe("trajectory runtime", () => {
   it("records sanitized runtime events by default", () => {
     const writes: string[] = [];
-    const recorder = createTrajectoryRuntimeRecorder({
+    const recorder = createCapturedRuntimeRecorder(writes, {
       sessionId: "session-1",
       sessionKey: "agent:main:session-1",
       sessionFile: "/tmp/session.jsonl",
@@ -75,13 +79,6 @@ describe("trajectory runtime", () => {
       modelId: "gpt-5.4",
       modelApi: "responses",
       workspaceDir: "/tmp/workspace",
-      writer: {
-        filePath: "/tmp/session.trajectory.jsonl",
-        write: (line) => {
-          writes.push(line);
-        },
-        flush: async () => undefined,
-      },
     });
 
     const runtimeRecorder = expectTrajectoryRuntimeRecorder(recorder);
@@ -515,6 +512,7 @@ describe("trajectory runtime", () => {
       assistantTexts: ["done"],
       finalPromptText: "inspect",
     });
+    expect(parsed.data.finalPromptTextOriginalLength).toBeUndefined();
     expect(parsed.data.messagesSnapshot).toBeUndefined();
     expect(parsed.data.droppedFields).toEqual(["messagesSnapshot"]);
     expect(
@@ -714,19 +712,6 @@ describe("trajectory runtime", () => {
     expect(parsed.data.finalPromptTextOriginalLength).toBe(finalPromptText.length);
   });
 
-  it("leaves short final prompts unchanged", () => {
-    const writes: string[] = [];
-    const recorder = createCapturedRuntimeRecorder(writes);
-
-    expectTrajectoryRuntimeRecorder(recorder).recordEvent("trace.artifacts", {
-      finalPromptText: "short prompt",
-    });
-
-    const parsed = JSON.parse(expectDefined(writes[0], "writes[0] test invariant"));
-    expect(parsed.data.finalPromptText).toBe("short prompt");
-    expect(parsed.data.finalPromptTextOriginalLength).toBeUndefined();
-  });
-
   it("redacts secrets before preserving usage in truncated runtime events", () => {
     const writes: string[] = [];
     const recorder = createCapturedRuntimeRecorder(writes);
@@ -755,33 +740,6 @@ describe("trajectory runtime", () => {
     expect(preservedUsage).not.toContain("sk-other-secret-token");
   });
 
-  it("describes queued writer state for cleanup timeout logs", () => {
-    const recorder = createTrajectoryRuntimeRecorder({
-      sessionId: "session-1",
-      sessionFile: "/tmp/session.jsonl",
-      writer: {
-        filePath: "/tmp/session.trajectory.jsonl",
-        write: () => "queued",
-        flush: async () => undefined,
-        describeQueue: () => ({
-          pendingWrites: 2,
-          queuedBytes: 256,
-          activeOperation: "file-append",
-          activeWriteBytes: 128,
-          maxFileBytes: 1024,
-          maxQueuedBytes: 1024,
-          yieldBeforeWrite: true,
-        }),
-      },
-    });
-
-    const runtimeRecorder = expectTrajectoryRuntimeRecorder(recorder);
-
-    expect(runtimeRecorder.describeFlushState()).toBe(
-      "pendingWrites=2 queuedBytes=256 activeOperation=file-append yieldBeforeWrite=true activeWriteBytes=128 maxQueuedBytes=1024 maxFileBytes=1024",
-    );
-  });
-
   it("does not record runtime events when explicitly disabled", () => {
     const recorder = createTrajectoryRuntimeRecorder({
       env: {
@@ -790,11 +748,6 @@ describe("trajectory runtime", () => {
       sessionId: "session-1",
       sessionKey: "agent:main:session-1",
       sessionFile: "/tmp/session.jsonl",
-      writer: {
-        filePath: "/tmp/session.trajectory.jsonl",
-        write: () => undefined,
-        flush: async () => undefined,
-      },
     });
 
     expect(recorder).toBeNull();

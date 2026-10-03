@@ -1,4 +1,3 @@
-// Collects daemon status from service files, config snapshots, ports, probes, and plugin drift.
 import fs from "node:fs/promises";
 import { asNonArrayRecord } from "@openclaw/normalization-core/record-coerce";
 import JSON5 from "json5";
@@ -19,7 +18,6 @@ import type { FindExtraGatewayServicesOptions } from "../../daemon/inspect.js";
 import { formatServiceLabel } from "../../daemon/runtime-format.js";
 import type { ServiceConfigAudit } from "../../daemon/service-audit.js";
 import { summarizeGatewayServiceLayout } from "../../daemon/service-layout.js";
-import { readGatewayServiceState, resolveGatewayService } from "../../daemon/service.js";
 import { gatewaySecretInputPathCanWin } from "../../gateway/credentials-secret-inputs.js";
 import { trimToUndefined } from "../../gateway/credentials.js";
 import { resolveGatewayRequiredListenHosts } from "../../gateway/net.js";
@@ -54,6 +52,7 @@ import {
   resolveGatewayStatusProbeConfig,
   resolveGatewayStatusSummary,
 } from "./status.gateway.js";
+import { readDaemonServiceStatus } from "./status.service.js";
 import type { GatewayRpcOpts } from "./types.js";
 
 type ConfigSummary = {
@@ -304,16 +303,17 @@ async function gatherDaemonStatusImpl(
   const timeoutMs = parseTimeoutMsWithFallback(opts.rpc.timeout, 10_000, {
     invalidType: "error",
   });
-  const service = resolveGatewayService();
-  const serviceState = await readGatewayServiceState(service, {
+  const { service, state: serviceState } = await readDaemonServiceStatus({
     env: process.env,
-    timeoutMs,
+    timeoutMs:
+      process.platform === "win32" && opts.rpc.timeout === undefined ? undefined : timeoutMs,
   });
   const { command, env: serviceEnv, loadState, runtime } = serviceState;
   const loaded = loadState.status === "loaded";
   // An explicit local port or separate process context does not select the
   // native service. Keep that service visible without borrowing its target or auth.
   const useNativeServiceTargetContext =
+    !serviceState.inspectionFailed &&
     localPortOverride === undefined &&
     serviceState.inspectionReason !== "service-manager-unavailable" &&
     isDefaultInstallIdentity(process.env) &&
@@ -404,7 +404,7 @@ async function gatherDaemonStatusImpl(
             deep: true,
           }),
         )
-        .then((services) =>
+        .then(({ services }) =>
           services.filter(
             (extra) =>
               extra.platform !== "linux" ||

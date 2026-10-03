@@ -6,7 +6,8 @@ import type { Page } from "playwright";
 import { expect, it } from "vitest";
 import { waitForControlUiDocument } from "../../../src/commands/control-ui-handoff.js";
 import { appendTranscriptMessage } from "../../../src/config/sessions/session-accessor.js";
-import { ensureGatewayOwnerProfile, setAvatar } from "../../../src/state/user-profiles.js";
+import { setAvatar } from "../../../src/state/user-profile-writes.worker.js";
+import { ensureGatewayOwnerProfile } from "../../../src/state/user-profiles.js";
 import {
   createOpenClawTestInstance,
   type OpenClawTestInstance,

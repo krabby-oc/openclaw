@@ -100,10 +100,6 @@ function buildTigerVncArgv(resources: ManagedResources): string[] {
   ];
 }
 
-function buildDesktopSessionArgv(): string[] {
-  return ["startxfce4"];
-}
-
 function chooseDisplayNumber(socketNames: readonly string[]): number {
   const occupied = new Set(
     socketNames.flatMap((name) => {
@@ -121,24 +117,15 @@ function chooseDisplayNumber(socketNames: readonly string[]): number {
   );
 }
 
-function createVncPassword(random: Buffer): string {
-  return random.toString("base64url").slice(0, 8);
-}
-
 function appendTail(current: string, chunk: string): string {
-  const next = current + chunk;
-  return next.length <= STDERR_TAIL_CHARS ? next : next.slice(-STDERR_TAIL_CHARS);
+  return (current + chunk).slice(-STDERR_TAIL_CHARS);
 }
 
 function lastStderrLine(stderr: string): string | undefined {
-  const lines = stderr.split(/\r?\n/u);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index]?.trim();
-    if (line) {
-      return line;
-    }
-  }
-  return undefined;
+  return stderr
+    .split(/\r?\n/u)
+    .findLast((line) => line.trim())
+    ?.trim();
 }
 
 async function readDisplaySocketNames(socketDir: string): Promise<string[]> {
@@ -274,7 +261,7 @@ export function createManagedLinuxDesktop(
     const plaintextFile = path.join(tempDir, "password.txt");
     const passwordFile = path.join(tempDir, "passwd");
     try {
-      const password = createVncPassword(randomBytes(12));
+      const password = randomBytes(12).toString("base64url").slice(0, 8);
       registerSecretValueForRedaction(password);
       await fs.writeFile(plaintextFile, password, { mode: 0o600, flag: "wx" });
       const passwordInput = await fs.readFile(plaintextFile);
@@ -509,7 +496,7 @@ export function createManagedLinuxDesktop(
       } finally {
         clearTimeout(busTimeout);
       }
-      const session = await spawnRun("startxfce4", buildDesktopSessionArgv(), activeEpoch, env);
+      const session = await spawnRun("startxfce4", ["startxfce4"], activeEpoch, env);
       const nextPair: ManagedPair = {
         current: true,
         vnc,

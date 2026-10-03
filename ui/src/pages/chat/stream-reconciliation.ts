@@ -19,6 +19,7 @@ import {
 import { extractText } from "../../lib/chat/message-extract.ts";
 import { isKeyedAssistantStreamFallbackMessage } from "./chat-thread-run-identity.ts";
 import {
+  lastUserMessageIndex,
   resolveAssistantTextTail,
   streamCausalInsertIndex,
   streamCausalInterval,
@@ -29,6 +30,7 @@ import {
   readLiveTerminalAfterBoundaryRunId,
   readLiveTerminalRunId,
 } from "./terminal-message-identity.ts";
+import type { LiveToolStreamState } from "./tool-stream-contract.ts";
 import {
   extractToolMessageRefs,
   resolveLiveToolStreamRefs,
@@ -36,15 +38,14 @@ import {
 } from "./tool-stream-identity.ts";
 import { canResetToolStream, resetToolStream, resetToolStreamRun } from "./tool-stream-state.ts";
 
-type StreamReconciliationState = StreamCausalBoundaryState & {
-  chatStream: string | null;
-  chatStreamStartedAt: number | null;
-};
+type StreamReconciliationState = StreamCausalBoundaryState &
+  LiveToolStreamState & {
+    chatStream: string | null;
+    chatStreamStartedAt: number | null;
+  };
 
-type ToolStreamHost = StreamReconciliationState & {
+export type ToolStreamReconciliationState = StreamReconciliationState & {
   chatToolMessages?: unknown[];
-  toolStreamById?: Map<string, unknown>;
-  toolStreamOrder?: unknown[];
 };
 
 type VisibleAssistantStreamPart = {
@@ -71,27 +72,6 @@ type MaterializeVisibleStreamOptions = {
   isHiddenStreamText: StreamVisibility;
 };
 
-export function currentLiveToolCallIds(state: StreamReconciliationState): string[] {
-  const toolHost = state as ToolStreamHost;
-  return Array.isArray(toolHost.toolStreamOrder)
-    ? toolHost.toolStreamOrder.filter((v): v is string => normalizeOptionalString(v) !== undefined)
-    : [];
-}
-
-function lastUserMessageIndex(messages: unknown[]): number {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (!message || typeof message !== "object") {
-      continue;
-    }
-    const role = normalizeLowercaseStringOrEmpty((message as { role?: unknown }).role);
-    if (role === "user") {
-      return index;
-    }
-  }
-  return -1;
-}
-
 export function maybeResetToolStream(
   state: StreamReconciliationState,
   opts?: { preserveStreamSegments?: boolean },
@@ -115,35 +95,9 @@ export function maybeResetToolStreamRun(state: StreamReconciliationState, runId:
 }
 
 export function clearToolStreamSegments(state: StreamReconciliationState) {
-  const toolHost = state as ToolStreamHost;
-  if (Array.isArray(toolHost.chatStreamSegments)) {
-    toolHost.chatStreamSegments = [];
+  if (Array.isArray(state.chatStreamSegments)) {
+    state.chatStreamSegments = [];
   }
-}
-
-function buildAssistantStreamMessage(
-  stream: string,
-  replacementText = stream,
-  timestamp = Date.now(),
-  source: VisibleAssistantStreamPart["source"] = "current",
-  itemId?: string,
-  runId?: string,
-  afterBoundaryRunId?: string,
-  afterSequence?: number,
-): Record<string, unknown> {
-  return {
-    role: "assistant",
-    content: [{ type: "text", text: stream }],
-    timestamp,
-    openclawStreamFallback: {
-      replacementText,
-      source,
-      ...(itemId ? { itemId } : {}),
-      ...(runId ? { runId } : {}),
-      ...(afterBoundaryRunId ? { afterBoundaryRunId } : {}),
-      ...(afterSequence === undefined ? {} : { afterSequence }),
-    },
-  };
 }
 
 function streamFallbackMetadata(message: unknown): Record<string, unknown> | null {
@@ -256,13 +210,10 @@ export function visibleAssistantStreamParts(
   state: StreamReconciliationState,
   opts: Pick<MaterializeVisibleStreamOptions, "includeCurrent" | "isHiddenStreamText">,
 ): VisibleAssistantStreamPart[] {
-  const streamHost = state as ToolStreamHost;
   const liveToolRefs = resolveLiveToolStreamRefs(state);
   const parts: VisibleAssistantStreamPart[] = [];
   let previousText: string | null = null;
-  const segments = Array.isArray(streamHost.chatStreamSegments)
-    ? streamHost.chatStreamSegments
-    : [];
+  const segments = Array.isArray(state.chatStreamSegments) ? state.chatStreamSegments : [];
   let toolIndexedSegmentIndex = 0;
   let latestBoundaryRunId: string | undefined;
   for (const [segmentIndex, segment] of segments.entries()) {
@@ -337,10 +288,7 @@ export function visibleCurrentAssistantStreamTail(
   if (typeof state.chatStream !== "string") {
     return null;
   }
-  const streamHost = state as ToolStreamHost;
-  const segments = Array.isArray(streamHost.chatStreamSegments)
-    ? streamHost.chatStreamSegments
-    : [];
+  const segments = Array.isArray(state.chatStreamSegments) ? state.chatStreamSegments : [];
   const previousText = accumulatedStreamText(segments);
   return visibleAssistantStreamText(
     trimAccumulatedStreamPrefix(state.chatStream, previousText),
@@ -390,10 +338,7 @@ function hasVisibleAssistantMessageAfterUser(
 ): boolean {
   const startIndex = lastUserMessageIndex(messages) + 1;
   return messages.slice(startIndex).some((message) => {
-    if (!message || typeof message !== "object") {
-      return false;
-    }
-    const role = normalizeLowercaseStringOrEmpty((message as { role?: unknown }).role);
+    const role = normalizeLowercaseStringOrEmpty(asNullableRecord(message)?.role);
     if (role !== "assistant" || isHiddenAssistantMessage(message)) {
       return false;
     }
@@ -565,19 +510,28 @@ export function materializeVisibleStreamState(
               messageTimestampMs,
             )
           : interval.end;
-    const streamMessage = buildAssistantStreamMessage(
-      part.text,
-      part.replacementText,
-      streamCausalTimestamp(nextMessages, insertIndex, part.timestamp, messageTimestampMs),
-      part.source,
-      part.itemId,
-      part.runId,
-      part.afterBoundaryRunId,
-      nextMessages
-        .slice(0, insertIndex)
-        .map((message) => readSessionMessageIdentity(message)?.sequence)
-        .findLast((sequence): sequence is number => typeof sequence === "number"),
-    );
+    const afterSequence = nextMessages
+      .slice(0, insertIndex)
+      .map((message) => readSessionMessageIdentity(message)?.sequence)
+      .findLast((sequence): sequence is number => typeof sequence === "number");
+    const streamMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: part.text }],
+      timestamp: streamCausalTimestamp(
+        nextMessages,
+        insertIndex,
+        part.timestamp,
+        messageTimestampMs,
+      ),
+      openclawStreamFallback: {
+        replacementText: part.replacementText,
+        source: part.source,
+        ...(part.itemId ? { itemId: part.itemId } : {}),
+        ...(part.runId ? { runId: part.runId } : {}),
+        ...(part.afterBoundaryRunId ? { afterBoundaryRunId: part.afterBoundaryRunId } : {}),
+        ...(afterSequence === undefined ? {} : { afterSequence }),
+      },
+    };
     nextMessages = [
       ...nextMessages.slice(0, insertIndex),
       streamMessage,

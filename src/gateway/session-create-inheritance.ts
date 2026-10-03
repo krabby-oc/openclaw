@@ -1,11 +1,17 @@
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import {
+  normalizeInheritedToolAllowlist,
+  normalizeInheritedToolDenylist,
+} from "../agents/inherited-tool-deny.js";
 import { MODEL_SELECTION_LOCKED_PARENT_FORK_MESSAGE } from "../auto-reply/reply/session-fork.js";
-import type { SessionEntry } from "../config/sessions.js";
+import type { InternalSessionEntry, SessionEntry } from "../config/sessions.js";
 import {
   inheritSessionCreationPolicy,
   inheritSessionGitContributorProfileIds,
   inheritSpawnSessionOwner,
   type SessionOwnerAssignment,
 } from "../config/sessions/session-entry-provenance.js";
+import { inheritSessionSelection } from "../config/sessions/session-entry-selection.js";
 import { isModelSelectionLocked } from "../sessions/model-overrides.js";
 import { waitForSessionParticipantRecording } from "../sessions/session-participant-recording.js";
 import { readResidentUserProfileId } from "../state/user-profile-list.js";
@@ -19,6 +25,33 @@ import {
 
 type SessionCreation = NonNullable<CreateGatewaySessionParams["creation"]> &
   Pick<SessionEntry, "inheritedGitContributorProfileIds">;
+
+/** Only an explicit parent supplies launch navigation; dashboard grouping is not lineage. */
+export function inheritSessionCreateParentFields(params: {
+  parent: SessionEntry | undefined;
+  existing: SessionEntry | undefined;
+  overrides: Pick<
+    CreateGatewaySessionParams,
+    "catalogTarget" | "model" | "toolOverrides" | "fastMode"
+  >;
+}): Partial<InternalSessionEntry> {
+  const { parent, existing, overrides } = params;
+  const inherited =
+    overrides.catalogTarget?.model.trim() || overrides.model?.trim()
+      ? {}
+      : inheritSessionSelection(parent);
+  if (overrides.toolOverrides !== undefined) {
+    delete inherited.toolOverrides;
+  }
+  if (overrides.fastMode !== undefined) {
+    // Explicit choices have already been validated by the canonical patch owner.
+    delete inherited.fastMode;
+  }
+  return {
+    ...inherited,
+    ...(!existing && parent?.conversationLink ? { conversationLink: parent.conversationLink } : {}),
+  };
+}
 
 /** Prepare the parent before lifecycle custody, while accepted input can still settle. */
 export async function prepareSessionCreateParent(input: {
@@ -93,5 +126,30 @@ export function resolveSessionCreateInheritance(params: {
       inheritedGitContributorProfileIds: inheritSessionGitContributorProfileIds(params.parent),
     },
     ...(ownerAssignment ? { ownerAssignment } : {}),
+  };
+}
+
+/** Project the trusted spawn policy only onto a genuinely new child row. */
+export function resolveSessionCreateSpawnPolicy(
+  params: Pick<CreateGatewaySessionParams, "spawnToolPolicy" | "preparedPermissionSelection">,
+  parentSessionKey: string | undefined,
+): Partial<SessionEntry> | undefined {
+  if (!params.spawnToolPolicy || !parentSessionKey) {
+    return undefined;
+  }
+  const completionOwnerSessionKey = normalizeOptionalString(
+    params.spawnToolPolicy.completionOwnerSessionKey,
+  );
+  const allow = normalizeInheritedToolAllowlist(params.spawnToolPolicy.allow);
+  const deny = normalizeInheritedToolDenylist(params.spawnToolPolicy.deny);
+  return {
+    spawnedBy: parentSessionKey,
+    ...(completionOwnerSessionKey ? { completionOwnerSessionKey } : {}),
+    inheritedToolPolicyVersion: 1,
+    ...(params.preparedPermissionSelection
+      ? { permissionMode: params.preparedPermissionSelection.mode }
+      : {}),
+    ...(allow.length > 0 ? { inheritedToolAllow: allow } : {}),
+    ...(deny.length > 0 ? { inheritedToolDeny: deny } : {}),
   };
 }

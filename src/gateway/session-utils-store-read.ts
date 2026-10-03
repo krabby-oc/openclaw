@@ -6,23 +6,14 @@ import {
   loadExactSessionEntryCandidates,
   loadExactSessionEntryCandidatesReadOnlyBatch,
 } from "../config/sessions/session-accessor.js";
+import type { SessionEntryListScope } from "../config/sessions/session-accessor.types.js";
 import type {
   CapturedSessionEntryReadSource,
-  SessionEntryListScope,
   SessionEntryReadSource,
-} from "../config/sessions/session-accessor.types.js";
+} from "../config/sessions/session-entry-read-source.types.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 
-/**
- * Request-scoped store reuse.
- *
- * Sharing resolution runs once per listed row, and each run materialized every
- * entry of a candidate store, making `sessions.list` quadratic in entries. A
- * caller that resolves many keys against the same stores passes one cache so
- * each store is materialized once. Entries are shared across rows within that
- * request, so cached stores are read-only to their holder; the cache is never
- * process-global, so it cannot serve a later request stale rows.
- */
+/** Request-local, read-only views avoid rematerializing a store for each sharing lookup. */
 type GatewaySessionStoreView = {
   store: Record<string, SessionEntry>;
   readSource?: SessionEntryReadSource;
@@ -68,6 +59,7 @@ export function loadGatewaySessionStoreReads(reads: readonly GatewaySessionStore
   const results = loadExactSessionEntryCandidatesReadOnlyBatch(
     pending.map((read) => ({
       agentId: read.agentId,
+      env: read.options.env,
       storePath: read.storePath,
       projection: read.options.projection,
       clone: false,
@@ -94,6 +86,7 @@ function loadGatewaySessionLookupStore(
   clone: boolean | undefined,
   agentId?: string,
   options: {
+    env?: NodeJS.ProcessEnv;
     readOnly?: boolean;
     cache?: GatewaySessionStoreCache;
     exactKeys?: readonly string[];
@@ -137,17 +130,12 @@ function loadGatewaySessionLookupStoreUncached(
         };
     const entries = loadExactSessionEntryCandidates({
       ...target,
+      env: options.env,
       projection: options.projection,
       sessionKeys: options.exactKeys,
-      onReadSource: (source, physical) => {
-        readSource = source;
-        capturedReadSource = physical
-          ? {
-              ...source,
-              databaseIdentity: physical.identity,
-              databaseBirthtime: physical.birthtime,
-            }
-          : undefined;
+      onReadSource: (source) => {
+        readSource = { agentId: source.agentId, path: source.path };
+        capturedReadSource = source;
       },
     });
     return {
@@ -162,6 +150,7 @@ function loadGatewaySessionLookupStoreUncached(
   return {
     store: Object.fromEntries(
       listEntries({
+        env: options.env,
         ...(agentId ? { agentId } : {}),
         ...(clone === false ? { clone: false } : {}),
         ...(options.projection ? { projection: options.projection } : {}),

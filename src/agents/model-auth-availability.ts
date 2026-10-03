@@ -153,7 +153,6 @@ export type ModelAuthAvailabilityResolver = {
     provider: string,
     ref?: ModelAuthAvailabilityRef,
   ): ModelAuthAvailability;
-  hasSyntheticAuth(provider: string): boolean;
 };
 
 function evaluateCliRuntimeModelAuthAvailability(
@@ -259,7 +258,6 @@ type CreateModelAuthAvailabilityResolverParams = {
   env?: NodeJS.ProcessEnv;
   syntheticAuthProviderRefs?: readonly string[];
   metadataSnapshot?: PluginMetadataSnapshot;
-  skipSetupProviderFallback?: boolean;
   externalCliProviderIds?: readonly string[];
   routeResolverFactory?: typeof createOpenAIModelRoutesResolver;
   allowPreparedRuntimeAuth?: boolean;
@@ -599,7 +597,7 @@ export function createModelAuthAvailabilityResolver(
       }).eligible
     );
   };
-  const credentialAvailability = (
+  const resolvedProfileAvailability = (
     provider: string,
     profileId: string,
     credential: AuthProfileCredential,
@@ -615,6 +613,11 @@ export function createModelAuthAvailabilityResolver(
     ) {
       return false;
     }
+    if (hydratedProfileIds.has(profileId)) {
+      return (
+        credential.type !== "token" || credential.expires === undefined || credential.expires > now
+      );
+    }
     return resolveStoredCredentialReadOnlyAvailability({
       credential,
       cfg: params.cfg,
@@ -623,29 +626,6 @@ export function createModelAuthAvailabilityResolver(
       canRefreshOAuth:
         provider === OPENAI_PROVIDER_ID || externalCliRefreshProfileIds.has(profileId),
     });
-  };
-  const resolvedProfileAvailability = (
-    provider: string,
-    profileId: string,
-    credential: AuthProfileCredential,
-    target: AuthTarget,
-  ) => {
-    if (!hydratedProfileIds.has(profileId)) {
-      return credentialAvailability(provider, profileId, credential, target);
-    }
-    if (
-      !modeAllowed(
-        provider,
-        target,
-        credential.type,
-        credential.type === "oauth" ? credential.authFlow : undefined,
-      )
-    ) {
-      return false;
-    }
-    return (
-      credential.type !== "token" || credential.expires === undefined || credential.expires > now
-    );
   };
   const profileInCooldown = (profileId: string, target: AuthTarget) => {
     const cooldownModel = target.modelId
@@ -1012,31 +992,21 @@ export function createModelAuthAvailabilityResolver(
     } = {},
   ) => {
     const { profileLock, boundProfileId } = options;
-    const ownership = profileLock
+    const ownedProfileId = profileLock || boundProfileId;
+    const ownership = ownedProfileId
       ? {
-          reason: "runtime-binding" as const,
+          reason: profileLock ? ("runtime-binding" as const) : ("provider-binding" as const),
           source: profileSource(
             provider,
-            profileLock,
-            targetForProfile(profileLock),
-            true,
+            ownedProfileId,
+            targetForProfile(ownedProfileId),
+            Boolean(profileLock),
             "clear",
           ),
         }
-      : boundProfileId
-        ? {
-            reason: "provider-binding" as const,
-            source: profileSource(
-              provider,
-              boundProfileId,
-              targetForProfile(boundProfileId),
-              false,
-              "clear",
-            ),
-          }
-        : policy.required
-          ? { reason: "configured-auth" as const, source: policy.direct }
-          : undefined;
+      : policy.required
+        ? { reason: "configured-auth" as const, source: policy.direct }
+        : undefined;
     return buildProviderModelAuthSourcePlan({
       ...(ownership ? { ownership } : {}),
       profiles: (options.profileIds ?? order.profileIds).map((profileId) =>
@@ -1185,6 +1155,21 @@ export function createModelAuthAvailabilityResolver(
       ref.pinnedProfileId,
     );
     const materializedModelId = normalizeModelIdForProvider(provider, ref.modelId ?? "");
+    const materializationMatchesRoute = (
+      fact: RuntimeAuthMaterialization,
+      route: ProviderModelRouteCandidate,
+    ) =>
+      route.runtimePolicy?.compatibleIds.some(
+        (runtimeId) => runtimeId.trim().toLowerCase() === fact.runtimeOwnerId,
+      ) === true &&
+      route.api.toLowerCase() === fact.modelApi &&
+      route.requestTransportOverrides === fact.requestTransportOverrides &&
+      modelMatchesProviderModelRoute({
+        provider,
+        api: fact.modelApi,
+        baseUrl: fact.modelBaseUrl,
+        route,
+      });
     const materialized =
       !modelLock &&
       !ref.pinnedProfileId &&
@@ -1205,17 +1190,7 @@ export function createModelAuthAvailabilityResolver(
                   resolveProviderModelRouteAuthRequirement(configuredAuthMode);
                 return (
                   (!configuredRequirement || configuredRequirement === route.authRequirement) &&
-                  route.runtimePolicy?.compatibleIds.some(
-                    (runtimeId) => runtimeId.trim().toLowerCase() === fact.runtimeOwnerId,
-                  ) === true &&
-                  route.api.toLowerCase() === fact.modelApi &&
-                  route.requestTransportOverrides === fact.requestTransportOverrides &&
-                  modelMatchesProviderModelRoute({
-                    provider,
-                    api: fact.modelApi,
-                    baseUrl: fact.modelBaseUrl,
-                    route,
-                  }) &&
+                  materializationMatchesRoute(fact, route) &&
                   modeAllowed(
                     provider,
                     {
@@ -1327,19 +1302,8 @@ export function createModelAuthAvailabilityResolver(
             : undefined,
         );
     if (materialized && !preferredSelection) {
-      const selectedRoute = routeResolution.routes.find(
-        (route) =>
-          route.runtimePolicy?.compatibleIds.some(
-            (runtimeId) => runtimeId.trim().toLowerCase() === materialized.runtimeOwnerId,
-          ) === true &&
-          route.api.toLowerCase() === materialized.modelApi &&
-          route.requestTransportOverrides === materialized.requestTransportOverrides &&
-          modelMatchesProviderModelRoute({
-            provider,
-            api: materialized.modelApi,
-            baseUrl: materialized.modelBaseUrl,
-            route,
-          }),
+      const selectedRoute = routeResolution.routes.find((route) =>
+        materializationMatchesRoute(materialized, route),
       );
       if (selectedRoute) {
         return {
@@ -1548,14 +1512,6 @@ export function createModelAuthAvailabilityResolver(
         : evaluation;
     },
     resolveProviderAuthAvailability,
-    hasSyntheticAuth: (provider) =>
-      synthetic.has(normalizeProviderIdForAuth(provider)) ||
-      synthetic.has(normalizeProvider(provider)) ||
-      (normalizeProviderIdForAuth(provider) === OPENAI_PROVIDER_ID && synthetic.has("codex")) ||
-      hasSyntheticLocalProviderAuthConfig({
-        cfg: params.cfg,
-        provider: normalizeProviderIdForAuth(provider),
-      }),
   };
 }
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

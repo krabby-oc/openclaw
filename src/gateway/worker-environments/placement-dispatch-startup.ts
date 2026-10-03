@@ -23,6 +23,7 @@ import {
   isPendingProvisioningEnvironment,
   requireProvisionedEnvironment,
 } from "./placement-dispatch-provisioning.js";
+import { reportPlacementTransition } from "./placement-record.js";
 import {
   readWorkerProjectPreparation,
   type WorkerProviderPreparedIntent,
@@ -34,7 +35,8 @@ import {
   type WorkerPlacementAuthorization,
   type WorkerPlacementDispatchRequest,
 } from "./service-contract.js";
-import type { WorkerEnvironmentReconcileCore, WorkerEnvironmentService } from "./service.js";
+import type { WorkerEnvironmentService } from "./service.js";
+import type { WorkerEnvironmentReconcileCore } from "./service.types.js";
 import type { WorkerSessionWorkspace } from "./session-workspace.js";
 
 export type WorkerPlacementRecoveryBarrier = (params: {
@@ -71,10 +73,6 @@ export function createWorkerPlacementDispatchStartup(options: {
   resolveGitAuthor?: (agentId: string) => { name?: string; email?: string } | undefined;
   resolveDevicePlacementRequirement?: WorkerDevicePlacementRequirementResolver;
   isCurrentNodePlacement?: WorkerNodePlacementAuthority;
-  reportTransition: (
-    observer: ((placement: WorkerDispatchPlacement) => void) | undefined,
-    placement: WorkerDispatchPlacement,
-  ) => void;
 }) {
   const { environments, failure, placements } = options;
 
@@ -311,7 +309,7 @@ export function createWorkerPlacementDispatchStartup(options: {
         workerBundleHash: provisioned.bundleHash,
       },
     });
-    options.reportTransition(params.onTransition, placement);
+    reportPlacementTransition(params.onTransition, placement);
     params.signal?.throwIfAborted();
     const syncingPlacement = placement;
     const assertAttachmentCurrent = () => {
@@ -372,6 +370,7 @@ export function createWorkerPlacementDispatchStartup(options: {
       const tunnel = await environments.startTunnel({
         environmentId: provisioned.environmentId,
         ownerEpoch,
+        authorize: assertAttachmentCurrent,
       });
       params.signal?.throwIfAborted();
       params.authorize?.();
@@ -455,6 +454,7 @@ export function createWorkerPlacementDispatchStartup(options: {
               sessionKey: request.sessionKey,
               generation: placement.generation,
               ...(gitAuthor ? { gitAuthor } : {}),
+              authorize: assertSyncOwner,
             });
       assertSyncOwner();
       params.signal?.throwIfAborted();
@@ -469,7 +469,7 @@ export function createWorkerPlacementDispatchStartup(options: {
           remoteWorkspaceDir: synced.remoteWorkspaceDir,
         },
       });
-      options.reportTransition(params.onTransition, placement);
+      reportPlacementTransition(params.onTransition, placement);
       const startingPlacement = placement;
       await requireNodePlacementEligibility(
         request,
@@ -504,7 +504,7 @@ export function createWorkerPlacementDispatchStartup(options: {
         // Activation transfers the tunnel to session reconciliation before observers can Stop.
         activated = true;
         params.signal?.removeEventListener("abort", stopAttemptTunnel);
-        options.reportTransition(params.onTransition, active);
+        reportPlacementTransition(params.onTransition, active);
         return active;
       };
       // Recovery retains the exact session/placement lifecycle fence through activation.
@@ -556,7 +556,7 @@ export function createWorkerPlacementDispatchStartup(options: {
     let recoveryOwnedPlacement: WorkerDispatchPlacement = placement;
     const report = (next: WorkerDispatchPlacement) => {
       recoveryOwnedPlacement = next;
-      options.reportTransition(onTransition, next);
+      reportPlacementTransition(onTransition, next);
     };
     report(placement);
     const handleRecoveryFailure = async (

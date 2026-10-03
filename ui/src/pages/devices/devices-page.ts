@@ -17,6 +17,7 @@ import {
 } from "../../app/context.ts";
 import { hasOperatorAdminAccess, hasOperatorPairingAccess } from "../../app/operator-access.ts";
 import { isDesktopPanelAvailable } from "../../app/panel-availability.ts";
+import { shellLayoutTraits } from "../../app/shell-layout-traits.ts";
 import { readPresenceEntries } from "../../app/user-profile.ts";
 import { showSecretRevealDialog } from "../../components/secret-reveal-dialog.ts";
 import { renderLearnMoreLink } from "../../components/settings-ui.ts";
@@ -24,7 +25,6 @@ import { renderSettingsWorkspace } from "../../components/settings-workspace.ts"
 import { t } from "../../i18n/index.ts";
 import { currentConfigObject } from "../../lib/config/config-state-model.ts";
 import { isMissingOperatorReadScopeError } from "../../lib/gateway-errors.ts";
-import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import { presenceConnectivitySignature } from "../../lib/nodes/inventory.ts";
 import {
   approveDevicePairing,
@@ -40,7 +40,7 @@ import {
   type ExecApprovalsTarget,
   type DevicesPageDataState,
 } from "../../lib/nodes/page-operations.ts";
-import { readSystemInfo } from "../../lib/system-info.ts";
+import { canReadSystemInfo, readSystemInfo } from "../../lib/system-info.ts";
 import {
   GatewayPageController,
   type GatewayPageChange,
@@ -74,7 +74,6 @@ class DevicesPage extends OpenClawLightDomElement {
   @state() private desktopEnvironments: EnvironmentSummary[] = [];
   private systemInfoUnavailable = false;
   @state() private pageState = createInitialDevicesState();
-  @state() private canPairDevice = false;
   @state() private canManagePairing = false;
   @state() private canAdmin = false;
   @state() private execApprovalsTarget: "gateway" | "node" = "gateway";
@@ -184,10 +183,7 @@ class DevicesPage extends OpenClawLightDomElement {
     "visible",
   );
   private readonly subscriptions = new SubscriptionsController(this)
-    .watch(
-      () => this.context?.runtimeConfig,
-      (runtimeConfig, notify) => runtimeConfig.subscribe(notify),
-    )
+    .watchStore(() => this.context?.runtimeConfig)
     .effect(
       () => this.context?.gateway,
       (gateway) =>
@@ -247,7 +243,6 @@ class DevicesPage extends OpenClawLightDomElement {
     void this.presenceTask.run([null, null]);
     this.resetInventoryDetails();
     this.presence = [];
-    this.canPairDevice = false;
     this.canManagePairing = false;
     this.canAdmin = false;
     super.disconnectedCallback();
@@ -262,7 +257,10 @@ class DevicesPage extends OpenClawLightDomElement {
     this.pageState.client = snapshot.client;
     this.pageState.connected = snapshot.phase === "connected";
     this.pageState.requestGeneration = this.gateway.epoch;
-    this.syncGatewayState(snapshot);
+    const connected = snapshot.phase === "connected";
+    const auth = snapshot.hello?.auth ?? null;
+    this.canAdmin = connected && hasOperatorAdminAccess(auth);
+    this.canManagePairing = connected && (!auth || hasOperatorPairingAccess(auth));
     if (!this.canLoadSystemInfo) {
       void this.systemInfoTask.run([null, null]);
       this.gatewaySystemInfo = null;
@@ -282,14 +280,6 @@ class DevicesPage extends OpenClawLightDomElement {
       void this.loadPresence();
     }
     this.syncPolling();
-  }
-
-  private syncGatewayState(snapshot: ApplicationGatewaySnapshot) {
-    const connected = snapshot.phase === "connected";
-    const auth = snapshot.hello?.auth ?? null;
-    this.canAdmin = connected && hasOperatorAdminAccess(auth);
-    this.canManagePairing = connected && (!auth || hasOperatorPairingAccess(auth));
-    this.canPairDevice = this.canAdmin;
   }
 
   private applyRouteData() {
@@ -387,12 +377,7 @@ class DevicesPage extends OpenClawLightDomElement {
 
   private get canLoadSystemInfo(): boolean {
     const snapshot = this.gateway.snapshot;
-    return (
-      this.isConnected &&
-      snapshot?.phase === "connected" &&
-      !this.systemInfoUnavailable &&
-      isGatewayMethodAdvertised(snapshot, "system.info") === true
-    );
+    return this.isConnected && !this.systemInfoUnavailable && canReadSystemInfo(snapshot);
   }
 
   private get canLoadDesktopEnvironments(): boolean {
@@ -492,7 +477,7 @@ class DevicesPage extends OpenClawLightDomElement {
         ? gatewaySnapshot.hello?.server?.version?.trim() || null
         : null;
     return html`
-      <section class="content-header">
+      <section class="content-header" ${shellLayoutTraits({ toolbarHeader: true })}>
         <div>
           <div class="page-title">${titleForRoute("devices")}</div>
           <div class="page-subtitle">
@@ -513,7 +498,7 @@ class DevicesPage extends OpenClawLightDomElement {
           devicesLoading: devices.devicesLoading,
           devicesError: devices.devicesError,
           devicesList: devices.devicesList,
-          canPairDevice: this.canPairDevice,
+          canPairDevice: this.canAdmin,
           canManagePairing: this.canManagePairing,
           canAdmin: this.canAdmin,
           configForm: currentConfigObject(config),

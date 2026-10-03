@@ -24,31 +24,31 @@ import { parseAgentSessionKey, resolveAgentIdFromSessionKey } from "../routing/s
 import { isSecretEgressProxyActive } from "../secrets/egress-proxy/registry.js";
 import type { SecretStoreExecEnvironment } from "../secrets/store/secret-store.js";
 import { createDeferredCore } from "../shared/deferred.js";
-import { normalizeDeliveryContext } from "../utils/delivery-context.shared.js";
 import { captureAgentToolSourceExecutionGuard } from "./agent-tool-source-execution-guard.js";
 import { markBackgrounded } from "./bash-process-registry.js";
 import { describeExecTool } from "./bash-tools.descriptions.js";
 import { processGatewayAllowlist } from "./bash-tools.exec-host-gateway.js";
 import { executeNodeHostCommand } from "./bash-tools.exec-host-node.js";
+import { EXEC_MANUAL_COLLECTION_FOLLOW_UP } from "./bash-tools.exec-output.js";
 import {
   assertSupportedExecParams,
   createExecRequestPreparation,
   type ExecToolArgs,
   resolveExecPreparedRunEnvironment,
-  resolveNotifyOnExitEmptySuccess,
+  resolveExecNotificationDefaults,
   resolvePreparedExecEnvironment,
 } from "./bash-tools.exec-request-preparation.js";
 import {
+  buildExecRuntimeErrorOutcome,
   DEFAULT_MAX_OUTPUT,
   DEFAULT_PENDING_MAX_OUTPUT,
-  ExecProcessPreflightError,
   type ExecProcessHandle,
-  normalizePathPrepend,
-  resolveExecTarget,
-  resolveApprovalRunningNoticeMs,
-  buildExecRuntimeErrorOutcome,
-  runExecProcess,
+  ExecProcessPreflightError,
   execSchema,
+  normalizePathPrepend,
+  resolveApprovalRunningNoticeMs,
+  resolveExecTarget,
+  runExecProcess,
 } from "./bash-tools.exec-runtime.js";
 import {
   shouldSkipExecScriptPreflight,
@@ -58,7 +58,6 @@ import {
   attachExecApprovalReview,
   buildExecForegroundResult,
   createExecHostResolver,
-  createExecProcessSettlement,
   resolveExecElevatedMode,
   resolveExecReviewerDefaults,
 } from "./bash-tools.exec-support.js";
@@ -110,7 +109,7 @@ export function createExecTool(
     10,
     120_000,
   );
-  const allowBackground =
+  const backgroundAvailable =
     defaults?.processToolAvailabilityRef?.value ?? defaults?.allowBackground ?? true;
   const defaultTimeoutSec = resolveExecDefaultTimeoutSec(defaults?.timeoutSec);
   const defaultPathPrepend = normalizePathPrepend(defaults?.pathPrepend);
@@ -138,17 +137,19 @@ export function createExecTool(
       `exec: interpreter/runtime binaries in safeBins (${unprofiledInterpreterSafeBins.join(", ")}) are unsafe without explicit hardened profiles; prefer allowlist entries`,
     );
   }
-  const notifyOnExit = defaults?.notifyOnExit !== false;
-  const notifyOnExitEmptySuccess = resolveNotifyOnExitEmptySuccess(defaults);
-  const notifySessionKey = normalizeOptionalString(
-    defaults?.notifySessionKey ?? defaults?.runSessionKey ?? defaults?.sessionKey,
-  );
-  const notifyDeliveryContext = normalizeDeliveryContext({
-    channel: defaults?.messageProvider,
-    to: defaults?.currentChannelId,
-    accountId: defaults?.accountId,
-    threadId: defaults?.currentThreadTs,
-  });
+  const {
+    notifyOnExit,
+    notifyOnExitEmptySuccess,
+    notifySessionKey,
+    resolveSubagentSession,
+    notifyDeliveryContext,
+  } = resolveExecNotificationDefaults(defaults);
+  const backgroundFollowUp =
+    notifyOnExit && notifyOnExitEmptySuccess
+      ? `Completion will wake this conversation automatically. If only waiting remains, report that the job is running and end this turn; do not keep polling. ${BACKGROUND_EXEC_FOLLOW_UP}`
+      : notifyOnExit
+        ? `${BACKGROUND_EXEC_FOLLOW_UP} Completion wakes this conversation on output or failure; empty successful jobs are silent (tools.exec.notifyOnExitEmptySuccess=false). Arrange continuation or collect the result before ending the turn if empty success matters.`
+        : `${BACKGROUND_EXEC_FOLLOW_UP} ${EXEC_MANUAL_COLLECTION_FOLLOW_UP}`;
   const approvalRunningNoticeMs = resolveApprovalRunningNoticeMs(defaults?.approvalRunningNoticeMs);
   // Derive agentId only when sessionKey is an agent session key.
   const parsedAgentSession = parseAgentSessionKey(defaults?.sessionKey);
@@ -213,6 +214,9 @@ export function createExecTool(
         return reviewCommand(transcript ? { ...input, transcript } : input);
       };
       let params = requestPreparation.normalizeParams(args);
+      // A required command remains an owned tool call until its terminal result is collected.
+      // Explicit detached services retain their existing independent process lifetime.
+      const allowBackground = backgroundAvailable && params.required !== true;
       const resolveExecEnvPrepared = requestPreparation.isResolveExecEnvPrepared(
         args as ExecToolArgs,
       );
@@ -230,7 +234,7 @@ export function createExecTool(
       let gatewayApproval: GatewayApprovalResult | undefined;
       let approvalReview: ExecToolApprovalReview | undefined;
       const foregroundFallbackWarning =
-        !allowBackground && (params.background === true || typeof params.yieldMs === "number")
+        !backgroundAvailable && (params.background === true || typeof params.yieldMs === "number")
           ? "Warning: continuation options are unavailable; running synchronously."
           : undefined;
       const yieldWindow = allowBackground
@@ -398,7 +402,7 @@ export function createExecTool(
         });
       }
       let run: ExecProcessHandle;
-      const settlement = createExecProcessSettlement();
+      let settled = false;
       let effectiveTimeout: number;
       try {
         if (elevatedRequested) {
@@ -570,6 +574,9 @@ export function createExecTool(
           });
         }
 
+        const subagentSession =
+          notifyOnExit && allowBackground ? await resolveSubagentSession() : false;
+        assertSourceActive();
         run = await runExecProcess({
           command: params.command,
           execCommand: execCommandOverride,
@@ -586,6 +593,7 @@ export function createExecTool(
           pendingMaxOutput: DEFAULT_PENDING_MAX_OUTPUT,
           cleanupMs,
           notifyOnExit,
+          subagentSession,
           notifyOnExitEmptySuccess,
           scopeKey: defaults?.scopeKey,
           sessionKey: notifySessionKey,
@@ -598,8 +606,9 @@ export function createExecTool(
           onUpdate,
           beforeSpawn: gatewayApproval?.revalidateBeforeExecution,
           assertCurrent: gatewayApproval?.assertCurrent,
-          onSettledBeforeNotify: settlement.settle,
-          onActivity: settlement.activity,
+          onSettledBeforeNotify: () => {
+            settled = true;
+          },
         });
         discardPreparedSandboxWorkdir = null;
       } catch (error) {
@@ -664,26 +673,13 @@ export function createExecTool(
         ]),
       );
       const onYieldNow = () => {
-        if (yielded || toolAborted || run.session.finalizing || settlement.outcome) {
+        if (yielded || toolAborted || run.session.finalizing || settled) {
           return;
         }
         yielded = true;
         run.disableUpdates();
         markBackgrounded(run.session);
-        // Only the guarded yield transition owns task registration. A process
-        // that settles before this timer fires must stay out of the task ledger.
-        const registration = settlement.register(run, notifySessionKey, agentId);
-        const finishPromotion = () => {
-          // Promotion owns the process handle even if it exits during registration.
-          backgrounded.resolve({ status: "backgrounded" });
-        };
-        if (registration) {
-          void withoutGatewayToolCallerIdentity(() =>
-            registration.then(finishPromotion, backgrounded.reject),
-          );
-        } else {
-          finishPromotion();
-        }
+        backgrounded.resolve({ status: "backgrounded" });
       };
 
       try {
@@ -713,7 +709,7 @@ export function createExecTool(
                     type: "text",
                     text: `${getWarningText()}Command still running (session ${run.session.id}, pid ${
                       run.session.pid ?? "n/a"
-                    }). ${BACKGROUND_EXEC_FOLLOW_UP}`,
+                    }). ${backgroundFollowUp}`,
                   },
                 ],
                 details: {
@@ -724,7 +720,7 @@ export function createExecTool(
                   cwd: run.session.cwd,
                   tail: run.session.tail,
                   // Structured callers receive details without the visible content.
-                  followUp: BACKGROUND_EXEC_FOLLOW_UP,
+                  followUp: backgroundFollowUp,
                 },
               },
           approvalReview,
