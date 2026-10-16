@@ -1,3 +1,4 @@
+import { withEngineStoreAdmission } from "../infra/database-engine/admission-scope.js";
 import { DoctorUnreadableStateDatabaseError } from "../infra/state-repair-message.js";
 import { DoctorMaintenanceRefusalError } from "../infra/update-doctor-result.js";
 import { createUpdateFailureFact } from "../infra/update-failure-facts.js";
@@ -34,9 +35,11 @@ export async function preflightExternalDoctorAgentLease(env: NodeJS.ProcessEnv):
     await import("../state/openclaw-agent-db-lease.js");
   let activeAgentLease = false;
   try {
-    activeAgentLease =
-      readActiveOpenClawAgentDatabaseLeasesReadOnly({ env }, openDoctorStateSchemaReadAdmission)
-        .length > 0;
+    activeAgentLease = withEngineStoreAdmission(
+      () =>
+        readActiveOpenClawAgentDatabaseLeasesReadOnly({ env }, openDoctorStateSchemaReadAdmission)
+          .length > 0,
+    );
   } catch (error) {
     if (hasCommandProcessCleanupError(error)) {
       throw error;
@@ -54,7 +57,9 @@ export async function assertDoctorAgentLeaseAdmission(env: NodeJS.ProcessEnv): P
   const { assertNoOpenClawAgentDatabaseLeasesReadOnly, OpenClawAgentDatabaseLeaseActiveError } =
     await import("../state/openclaw-agent-db-lease.js");
   try {
-    assertNoOpenClawAgentDatabaseLeasesReadOnly({ env }, openDoctorStateSchemaReadAdmission);
+    withEngineStoreAdmission(() =>
+      assertNoOpenClawAgentDatabaseLeasesReadOnly({ env }, openDoctorStateSchemaReadAdmission),
+    );
   } catch (error) {
     if (error instanceof OpenClawAgentDatabaseLeaseActiveError) {
       throw createDoctorAgentLeaseRefusal(env, error);

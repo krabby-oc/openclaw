@@ -3,6 +3,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { readBackupEngine } from "../snapshot/database-backup.js";
 import { admitStatePostgres, stateEngineSchema } from "../state/openclaw-state-db-engine.js";
 import { readStateSchemaContentVersion } from "../state/openclaw-state-db-schema-version.js";
+import { isNativeClientCredentialBootstrap } from "./client-credential-native-bootstrap.js";
 import { databaseEngineAdapters } from "./database-engine/adapters.js";
 import { resolveDatabaseEngineInput } from "./database-engine/config.js";
 import {
@@ -10,6 +11,8 @@ import {
   getPostgresPhysicalFacts,
 } from "./database-engine/physical-facts.js";
 import { openNodeSqliteDatabase } from "./node-sqlite.js";
+import { prepareSqliteReadOnlyLocationSyncInProcess } from "./sqlite-readonly-location.js";
+import { getAdmittedSqliteSchemaFacts } from "./sqlite-schema-facts.js";
 import type { StateDatabaseDiscovery } from "./update-candidate-paths.js";
 import {
   readUpdateCandidatePluginIndex,
@@ -64,7 +67,33 @@ if (parentPort && workerData?.updatePostgresState === true) {
     const shared = path.resolve(input.stateDir, "state", "openclaw.sqlite");
     const identity = readBackupEngine(shared);
     if (identity.engine !== "postgres") {
-      throw new Error("PostgreSQL update preflight requires the matching state anchor.");
+      const snapshot = prepareSqliteReadOnlyLocationSyncInProcess(shared);
+      try {
+        using source = openNodeSqliteDatabase(snapshot.location, { readOnly: true });
+        const credentials = isNativeClientCredentialBootstrap(source);
+        const facts = getAdmittedSqliteSchemaFacts(source)!;
+        const empty =
+          facts.userVersion === 0 &&
+          !facts.tables.size &&
+          !facts.indexes.size &&
+          !facts.views.size &&
+          !facts.triggers.size;
+        if (credentials) {
+          throw new Error(
+            "Native credential bootstrap cannot become a PostgreSQL anchor. Start the Gateway once on SQLite and run openclaw doctor --fix, then use openclaw database port before selecting PostgreSQL.",
+          );
+        }
+        if (!empty) {
+          throw new Error("PostgreSQL update preflight requires the matching state anchor.");
+        }
+        return {
+          files: entries,
+          version: { userVersion: 0, contentVersion: 0 },
+          pluginIndex: { value: { index: { installRecords: {} } }, records: {} },
+        };
+      } finally {
+        snapshot.cleanup();
+      }
     }
     using anchor = openNodeSqliteDatabase(shared, { readOnly: true });
     const db = databaseEngineAdapters.postgres.openConnection({

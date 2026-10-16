@@ -9,6 +9,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { createDeferredCore } from "../shared/deferred.js";
+import { readConfigMachineStateAsync } from "../state/config-machine-state-async.js";
 import { createOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-db-async-lifecycle.js";
 import {
   closeOpenClawStateDatabaseAsync,
@@ -77,10 +78,10 @@ async function fixture(mode: "healthy" | "local-reader" | "unsettled-inspection"
       // Exercise native idle ownership without preparing the unrelated task-flow runtime.
       const read = () =>
         executeOpenClawStateWorker(context, {
-          type: "deviceAuth.read",
-          input: { deviceId: `idle-fixture:${mode}`, role: "operator", readOnly: false },
+          type: "nativeHookRelay.read",
+          input: { relayId: `idle-fixture:${mode}` },
         });
-      expect(await read()).toEqual({ entry: null, expectedToken: null });
+      expect(await read()).toBeUndefined();
       const worker = messages.mock.contexts[0];
       if (!(worker instanceof Worker)) {
         throw new Error("Expected the canonical shared-state worker");
@@ -167,7 +168,7 @@ it("retains the original healthy worker after one minute and closes it after 30 
   f.advance(minute);
   f.scheduled(minute)();
   // Joining a real call also joins the original owner's retirement, if it retired at one minute.
-  expect(await f.read()).toEqual({ entry: null, expectedToken: null });
+  expect(await f.read()).toBeUndefined();
   expect(f.worker.threadId).not.toBe(-1);
   f.advance(minute);
   f.scheduled(minute)();
@@ -177,7 +178,7 @@ it("retains the original healthy worker after one minute and closes it after 30 
   f.advance(29 * minute);
   f.scheduled(29 * minute)();
   await exited;
-  expect(await f.read()).toEqual({ entry: null, expectedToken: null });
+  expect(await f.read()).toBeUndefined();
 });
 
 it("retires an unavailable actor even when its completed idle result is healthy", async () => {
@@ -189,7 +190,7 @@ it("retires an unavailable actor even when its completed idle result is healthy"
     f.advance(minute);
     f.scheduled(minute)();
     await vi.waitFor(() => expect(f.worker.threadId).toBe(-1));
-    expect(await f.read()).toEqual({ entry: null, expectedToken: null });
+    expect(await f.read()).toBeUndefined();
   } finally {
     available.mockRestore();
   }
@@ -227,7 +228,7 @@ it("keeps a healthy worker when another connection holds the WAL reader", async 
     f.scheduled(minute)();
     await vi.waitFor(() => expect(f.scheduled(29 * minute)).toBeTypeOf("function"));
     expect(f.worker.threadId).not.toBe(-1);
-    expect(await f.read()).toEqual({ entry: null, expectedToken: null });
+    expect(await f.read()).toBeUndefined();
     expect(f.worker.threadId).not.toBe(-1);
   } finally {
     if (reader.isTransaction) {
@@ -266,8 +267,8 @@ it("ignores an inspection result and old expiry when real work resumes", async (
     entered.resolve();
     await finish.promise;
     return scope.execute({
-      type: "deviceAuth.read",
-      input: { deviceId: "idle-fixture:idle", role: "operator", readOnly: false },
+      type: "nativeHookRelay.read",
+      input: { relayId: "idle-fixture:idle" },
     });
   });
   await entered.promise;
@@ -283,7 +284,7 @@ it("ignores an inspection result and old expiry when real work resumes", async (
   } finally {
     finish.resolve();
   }
-  expect(await active).toEqual({ entry: null, expectedToken: null });
+  expect(await active).toBeUndefined();
   oldInspection();
   f.advance(minute);
   f.scheduled(minute)();
@@ -359,7 +360,7 @@ it("replaces a failed idle actor after an enclosing callback settles", async () 
     await vi.waitFor(() => expect(settled).toBe(true));
     expect(await active).toBe("completed without dispatch");
     await nextTurn();
-    expect(await f.read()).toEqual({ entry: null, expectedToken: null });
+    expect(await f.read()).toBeUndefined();
   } finally {
     send.mockRestore();
     resume?.();
@@ -372,8 +373,8 @@ it("replaces a failed idle actor after an enclosing callback settles", async () 
 const { explicitSqliteCloseReleasesNativeResources } = await initializeSqliteRuntimeCapabilities();
 const poolIt = explicitSqliteCloseReleasesNativeResources ? it : it.skip;
 const read = {
-  type: "deviceAuth.read",
-  input: { deviceId: "idle-fixture:idle-custody", role: "operator", readOnly: false },
+  type: "nativeHookRelay.read",
+  input: { relayId: "idle-fixture:idle-custody" },
 } as const;
 
 async function openClient(context: OpenClawStateWorkerContext) {
@@ -396,10 +397,11 @@ poolIt(
     const env = { OPENCLAW_STATE_DIR: dirs.make("openclaw-worker-capacity-") };
     const context = captureOpenClawStateWorkerContext({ env });
     const first = await openClient(context);
-    const identityKey = "idle-fixture:capacity-reopen";
-    const identity = await executeOpenClawStateWorker(context, {
-      type: "deviceIdentity.load",
-      input: { identityKey },
+    const key = "idle-fixture:capacity-reopen";
+    const record = { value: "synthetic-capacity-value" };
+    await executeOpenClawStateWorker(context, {
+      type: "machineState.write",
+      input: { key, value: record },
     });
     const maintenance = createOpenClawDatabaseMaintenanceScope();
     const peerContext = maintenance.run(() => captureOpenClawStateWorkerContext({ env }));
@@ -437,27 +439,16 @@ poolIt(
       expect(getSqliteWorkerActorIdentity(peer.store)).toBe(first.actor);
 
       resume.resolve();
-      await expect(active).resolves.toEqual({ entry: null, expectedToken: null });
-      await expect(executeOpenClawStateWorker(next, read)).resolves.toEqual({
-        entry: null,
-        expectedToken: null,
-      });
+      await expect(active).resolves.toBeUndefined();
+      await expect(executeOpenClawStateWorker(next, read)).resolves.toBeUndefined();
       await expect(first.store.execute(read)).rejects.toMatchObject({ code: "closed" });
       expect(getSqliteWorkerActorIdentity(peer.store)).toBe(first.actor);
-      await expect(executeOpenClawStateWorker(peerContext, read)).resolves.toEqual({
-        entry: null,
-        expectedToken: null,
-      });
+      await expect(executeOpenClawStateWorker(peerContext, read)).resolves.toBeUndefined();
 
-      await expect(
-        executeOpenClawStateWorker(context, {
-          type: "deviceIdentity.load",
-          input: { identityKey },
-        }),
-      ).resolves.toEqual(identity);
       const reopened = await openClient(context);
       expect(reopened.store).not.toBe(first.store);
       expect(reopened.actor).toBe(first.actor);
+      await expect(readConfigMachineStateAsync(key, { env })).resolves.toEqual(record);
     } finally {
       resume.resolve();
       await Promise.allSettled([
@@ -509,17 +500,17 @@ poolIt("joins expiring idle-client maintenance without retiring a healthy co-use
     });
     await expect(
       runOpenClawStateWorkerOperation(peerContext, (scope) => scope.execute(read)),
-    ).resolves.toEqual({ entry: null, expectedToken: null });
+    ).resolves.toBeUndefined();
     expect(idleClosed).toBe(false);
     expect(f.worker.threadId).not.toBe(-1);
 
     resume.resolve();
-    await expect(accepted).resolves.toEqual({ entry: null, expectedToken: null });
+    await expect(accepted).resolves.toBeUndefined();
     await idleClosing;
     expect(getSqliteWorkerActorIdentity(peer.store)).toBe(first.actor);
     await expect(
       runOpenClawStateWorkerOperation(peerContext, (scope) => scope.execute(read)),
-    ).resolves.toEqual({ entry: null, expectedToken: null });
+    ).resolves.toBeUndefined();
 
     expect(f.worker.threadId).not.toBe(-1);
     peerClosing = maintenance.close();
@@ -646,7 +637,7 @@ poolIt.each(["ordinary", "cleanup"] as const)(
       cleanupStore = undefined;
       await expect(
         runOpenClawStateWorkerOperation(firstContext, (scope) => scope.execute(read)),
-      ).resolves.toEqual({ entry: null, expectedToken: null });
+      ).resolves.toBeUndefined();
     } finally {
       messages.mockRestore();
       await Promise.allSettled([

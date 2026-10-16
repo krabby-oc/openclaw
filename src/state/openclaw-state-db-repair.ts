@@ -1,3 +1,7 @@
+import {
+  prepareClientCredentialMigration,
+  recoverClientCredentialStore,
+} from "../infra/client-credential-migration.js";
 import { clearNodeSqliteKyselyCacheForDatabase } from "../infra/kysely-sync.js";
 import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import { setSqliteBusyTimeout } from "../infra/sqlite-busy-timeout.js";
@@ -11,6 +15,7 @@ import { assertSqliteSchemaTablesPresent } from "../infra/sqlite-schema-contract
 import { migrateSqliteSchemaToStrictInTransaction } from "../infra/sqlite-strict.js";
 import { runSqliteImmediateTransactionSync } from "../infra/sqlite-transaction.js";
 import { migrateLegacyCronRunLogsToTaskRuns } from "../infra/state-migrations.cron-run-logs.js";
+import { runUpdateSqliteMigration } from "../infra/update-doctor-migration-attribution.js";
 import { hasPreJournalStateSchema } from "./agent-deletion-journal-history.js";
 import {
   clearOpenClawDatabaseQuarantine,
@@ -65,6 +70,7 @@ import { migrateSingletonStateFoldInV12 } from "./openclaw-state-db-schema-v12-f
 import { migratePredicateColumnsV21 } from "./openclaw-state-db-schema-v21-columns.js";
 import { readStateSchemaContentVersion } from "./openclaw-state-db-schema-version.js";
 import * as sessionWatchMigration from "./openclaw-state-db-session-watch-migration.js";
+import { isUninitializedNativeStartupDatabase } from "./openclaw-state-db-startup-checkpoint.js";
 import * as retirements from "./openclaw-state-db-table-retirements.js";
 import { recoverOrphanTaskDeliveryRows } from "./openclaw-state-db-task-delivery-recovery.js";
 import { describeAgentPathMigration } from "./openclaw-state-db.paths.js";
@@ -84,6 +90,24 @@ export function repairStateSchema(
   assertOpenClawStateSchemaRepairAllowed(pathname);
   // This private handle rebuilds referenced tables and is closed after repair.
   const db = openNodeSqliteDatabase(pathname, { enableForeignKeyConstraints: false });
+  try {
+    return runUpdateSqliteMigration(db, pathname, () =>
+      repairOpenedStateSchema(db, pathname, env, scope),
+    );
+  } finally {
+    if (db.isOpen) {
+      clearNodeSqliteKyselyCacheForDatabase(db);
+      db.close();
+    }
+  }
+}
+
+function repairOpenedStateSchema(
+  db: import("node:sqlite").DatabaseSync,
+  pathname: string,
+  env: NodeJS.ProcessEnv,
+  scope: "automatic" | "doctor" | "readability" | "indexes" | "version",
+): { changes: string[]; warnings: string[] } {
   const rebuiltIndexNames = new Set<string>();
   let indexChanges: string[] = [];
   let ownershipRefused = false;
@@ -121,7 +145,18 @@ export function repairStateSchema(
         () => {
           assertOpenClawStateDatabaseOwner(db, { pathname });
           const previousVersion = readStateSchemaContentVersion(db);
+          if (previousVersion === 0 && !isUninitializedNativeStartupDatabase(db)) {
+            throw new Error(
+              "Unrecognized native bootstrap database; preserve it for explicit recovery.",
+            );
+          }
+          prepareClientCredentialMigration(db, {
+            path: pathname,
+            env,
+            fromVersion: previousVersion,
+          });
           if (previousVersion === OPENCLAW_STATE_SCHEMA_VERSION) {
+            recoverClientCredentialStore(db, { path: pathname, env });
             return [];
           }
           const applied = migrateBoundedStateSchema(db, previousVersion, {
@@ -236,6 +271,12 @@ export function repairStateSchema(
       pathname,
       () => {
         const previousVersion = readStateSchemaContentVersion(db);
+        if (previousVersion === 0 && !isUninitializedNativeStartupDatabase(db)) {
+          throw new Error(
+            "Unrecognized native bootstrap database; preserve it for explicit recovery.",
+          );
+        }
+        prepareClientCredentialMigration(db, { path: pathname, env, fromVersion: previousVersion });
         applied.push(...recoverOrphanTaskDeliveryRows(db, pathname));
         if (previousVersion !== OPENCLAW_STATE_SCHEMA_VERSION) {
           openClawStateMigrationAssertions.get(previousVersion)?.(db, { pathname });
@@ -255,6 +296,7 @@ export function repairStateSchema(
           assertOpenClawStateDatabaseOwner(db, { pathname });
         }
         if (previousVersion === OPENCLAW_STATE_SCHEMA_VERSION) {
+          recoverClientCredentialStore(db, { path: pathname, env });
           assertSqliteIntegrity(db, pathname);
           // Current-schema doctor repair may normalize recognized columns or
           // table options, but it must never recreate a missing table empty.
@@ -288,9 +330,9 @@ export function repairStateSchema(
           );
         }
         assertCanonicalStateSchemaShape(db, pathname);
-        // Recognized schema-1 stores predate audit; Doctor must finish their schema
-        // before its later read-only workspace and agent readers can consume it.
-        if (preAuditSchema || tableExists(db, "audit_events")) {
+        // Recognized native bootstrap and schema-1 stores predate audit; Doctor must
+        // finish their schema before later workspace and agent readers consume it.
+        if (previousVersion === 0 || preAuditSchema || tableExists(db, "audit_events")) {
           // Historical delivery repair below already writes and reads the promoted columns.
           if (migratePredicateColumnsV21(db, previousVersion)) {
             applied.push(
@@ -387,13 +429,6 @@ export function repairStateSchema(
       warnings: [`Failed migrating shared state database schema at ${pathname}: ${reason}`],
     };
   } finally {
-    if (db.isOpen) {
-      clearNodeSqliteKyselyCacheForDatabase(db);
-      // Rollback cleanup may have closed the handle after an unrecoverable
-      // transaction failure; double-close throws ERR_INVALID_STATE and would
-      // discard the diagnostic warnings returned by the catch above.
-      db.close();
-    }
     if (!ownershipRefused) {
       ensureOpenClawStatePermissions(pathname, env);
     }

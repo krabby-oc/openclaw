@@ -4,7 +4,10 @@ import { __setFsSafeTestHooksForTest } from "@openclaw/fs-safe/test-hooks";
 // Doctor device pairing tests cover device-pairing checks, repair prompts, and diagnostics.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadDeviceAuthToken } from "../infra/device-auth-store.js";
-import { seedDeviceAuthToken } from "../infra/device-auth-store.test-support.js";
+import {
+  seedDeviceAuthToken,
+  readDeviceAuthTokenForTest,
+} from "../infra/device-auth-store.test-support.js";
 import {
   loadOrCreateDeviceIdentity,
   publicKeyRawBase64UrlFromPem,
@@ -16,10 +19,7 @@ import {
   detectLegacyDeviceAuth,
   migrateLegacyDeviceAuth,
 } from "../infra/state-migrations.device-auth.js";
-import {
-  closeOpenClawStateDatabaseByPathAsync,
-  openOpenClawStateDatabase,
-} from "../state/openclaw-state-db.js";
+import { closeOpenClawStateDatabaseByPathAsync } from "../state/openclaw-state-db.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { withTempDir } from "../test-utils/temp-dir.js";
@@ -242,7 +242,6 @@ describe("noteDevicePairingHealth", () => {
     await withOpenClawTestState(
       { prefix: "openclaw-doctor-device-auth-debt-", env: { OPENCLAW_TEST_FAST: "1" } },
       async (state) => {
-        openOpenClawStateDatabase({ env: state.env });
         const expectedToken = "synthetic-legacy-token";
         const sourcePath = await state.writeText(
           "identity/device-auth.json",
@@ -250,10 +249,12 @@ describe("noteDevicePairingHealth", () => {
         );
         // Migration lock release retires native handles; each read reacquires the owner.
         const readTokenRow = () => {
-          const { db: readDb } = openOpenClawStateDatabase({ env: state.env });
-          return readDb
-            .prepare("SELECT token FROM device_auth_tokens WHERE device_id = ? AND role = ?")
-            .get("synthetic-device", "operator");
+          const entry = readDeviceAuthTokenForTest({
+            env: state.env,
+            deviceId: "synthetic-device",
+            role: "operator",
+          });
+          return entry ? { token: entry.token } : undefined;
         };
         let rowAtRemoval: unknown;
         let removalAttempts = 0;

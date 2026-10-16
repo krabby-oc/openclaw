@@ -355,7 +355,7 @@ export async function beginDoctorMaintenance(params: DoctorMaintenanceParams) {
     // Retain one process owner across every migration and its resource drainage.
     await acquireStoppedMaintenanceResources();
     assertUpdateAdmissionCurrent?.();
-    await assertDoctorAgentLeaseAdmission(state.env);
+    await state.run(() => assertDoctorAgentLeaseAdmission(state.env));
     repairStoresMayBeOpen = true;
   };
   let admissionFailureHandled = false;
