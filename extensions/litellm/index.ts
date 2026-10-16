@@ -90,7 +90,7 @@ async function promptLitellmModel(ctx: ProviderAuthContext, apiKey: string): Pro
     const { discoverOpenAICompatibleLocalModels } =
       await import("openclaw/plugin-sdk/provider-setup");
     const result = await discoverOpenAICompatibleLocalModels({
-      baseUrl: /\/v1$/.test(baseUrl) ? baseUrl : `${baseUrl}/v1`,
+      baseUrl: baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`,
       apiKey,
       configuredProvider: { config: ctx.config, id: PROVIDER_ID },
       beforeRequest: ctx.assertCurrent,

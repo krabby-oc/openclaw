@@ -114,10 +114,9 @@ async function fetchSelfHostedDiscoveryJson(params: {
     const request = {
       url: params.url,
       init: {
-        headers: {
-          ...(params.acceptJson ? { Accept: "application/json" } : {}),
-          ...params.requestPolicy.headers,
-        },
+        headers: params.acceptJson
+          ? { Accept: "application/json", ...params.requestPolicy.headers }
+          : params.requestPolicy.headers,
       },
       policy: resolveProviderTransportSsrFPolicy({ ...params.requestPolicy, url: params.url }),
       dispatcherPolicy,
