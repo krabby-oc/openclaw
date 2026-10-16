@@ -454,6 +454,7 @@ SQLite and PostgreSQL Git exports apply the same `--exclude-secrets` policy. Pos
 - `mcp_oauth_stores`
 - `native_hook_relay_bridges`
 - `secret_store_entries`
+- `web_push_approval_deliveries` (dependent subscription receipts)
 - `web_push_subscriptions`
 - `worker_environment_credentials`
 

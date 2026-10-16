@@ -13,7 +13,7 @@ import { sha256File } from "../infra/directory-durability.js";
 import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import { writePostgresExportEnvelope, type PostgresExportEnvelope } from "./export-envelope.js";
 import type { GitBackupIdentity } from "./git-backup-codec.js";
-import { sanitizeGitBackupImage } from "./git-backup-sanitizer.js";
+import { createGitBackupRowTransform } from "./git-backup-sanitizer.js";
 import { fingerprintPostgresGeneration, inspectPostgresGeneration } from "./postgres-generation.js";
 
 type Anchor = Pick<PostgresExportEnvelope["source"], "engine" | "storeId" | "namespace">;
@@ -68,6 +68,13 @@ export async function exportPostgresBackup(params: {
       descriptor,
       storeId: anchor.storeId,
       assertCurrent: params.assertCurrent,
+      transformRow: params.gitIdentity
+        ? createGitBackupRowTransform(
+            params.gitIdentity,
+            descriptor.id,
+            new Set(descriptor.tables.map(({ name }) => name)),
+          )
+        : undefined,
     });
     // The portable image uses SQLite allocation, while a matched PG restore retains its sequence.
     verification.allocations = await readDatabasePortAllocations(
@@ -89,7 +96,6 @@ export async function exportPostgresBackup(params: {
       preserveRowIds: true,
       async transform(db) {
         if (params.gitIdentity) {
-          sanitizeGitBackupImage(db, params.gitIdentity, descriptor.id);
           sanitizedDifferences.push("git-exclude-secrets");
         }
         const before = /* sqlite-allow-raw: count the sanitizer's native changes. */ db

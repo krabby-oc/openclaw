@@ -1,4 +1,5 @@
 import "./backup-worker.test-support.js";
+import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -9,8 +10,11 @@ import {
   clearRuntimeConfigSnapshot,
   setRuntimeConfigSnapshot,
 } from "../../config/runtime-snapshot.js";
-import { verifyMatchedPostgresBackup } from "../../snapshot/database-backup.js";
-import { dumpGitBackupDatabase } from "../../snapshot/git-backup-codec.js";
+import { readBackupEngine, verifyMatchedPostgresBackup } from "../../snapshot/database-backup.js";
+import {
+  dumpGitBackupDatabase,
+  restoreGitBackupDirectory,
+} from "../../snapshot/git-backup-codec.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { openNodeSqliteDatabase } from "../node-sqlite.js";
 import { agentPortProvider } from "./agent-port.js";
@@ -78,6 +82,21 @@ describe.skipIf(!connection)("Git backup secret exclusion across engines", () =>
                   .prepare("INSERT INTO config_machine_state VALUES (?, ?, 1)")
                   .run(key, key === "sidebar.retained" ? '"keep"' : JSON.stringify(secret));
               }
+              source.exec(`
+                INSERT INTO operator_approvals (
+                  cursor_id, approval_id, resolution_ref, kind, status, presentation_json,
+                  reviewer_device_ids_json, audience_session_keys_json, runtime_epoch,
+                  created_at_ms, expires_at_ms, updated_at_ms
+                ) VALUES (1, 'approval', '${"a".repeat(43)}', 'exec', 'pending', '{}',
+                  '[]', '[]', 'fixture', 1, 2, 1);
+                INSERT INTO web_push_subscriptions (
+                  endpoint_hash, subscription_id, endpoint, p256dh, auth, created_at_ms, updated_at_ms
+                ) VALUES ('endpoint', 'subscription', 'https://push.example.test',
+                  'synthetic-key', 'synthetic-auth', 1, 1);
+                INSERT INTO web_push_approval_deliveries VALUES (
+                  'approval', 'subscription', 'device', NULL, 1
+                );
+              `);
               source
                 .prepare("INSERT INTO device_auth_tokens VALUES ('device', 'operator', ?, '[]', 1)")
                 .run(secret);
@@ -209,6 +228,49 @@ describe.skipIf(!connection)("Git backup secret exclusion across engines", () =>
                 Buffer.from(secret),
               ),
             ).toBe(true);
+            if (!generic) {
+              for (const [index, directory] of [pgDir, unredacted].entries()) {
+                const targetPath = state.path(`restored-${index}.sqlite`);
+                await restoreGitBackupDirectory({
+                  sourcePath: directory,
+                  targetPath,
+                  expectedIdentity: pgIdentity,
+                });
+                const restored = readBackupEngine(targetPath);
+                assert(restored.engine === "postgres");
+                try {
+                  expect(restored.storeId).toBe(storeId);
+                  expect(restored.namespace).not.toBe(namespace);
+                  const retained =
+                    family === "state"
+                      ? `SELECT value_json FROM "${restored.namespace}".config_machine_state WHERE state_key = 'sidebar.retained'`
+                      : `SELECT value_json FROM "${restored.namespace}".cache_entries WHERE scope = 'unrelated' AND key = 'keep'`;
+                  expect((await client.query(retained)).rows).toEqual([
+                    { value_json: family === "state" ? '"keep"' : '{"retained":true}' },
+                  ]);
+                  const secretTable =
+                    family === "state" ? "device_auth_tokens" : "auth_profile_store";
+                  expect(
+                    (
+                      await client.query(
+                        `SELECT count(*)::int AS n FROM "${restored.namespace}"."${secretTable}"`,
+                      )
+                    ).rows,
+                  ).toEqual([{ n: index }]);
+                  if (family === "state") {
+                    expect(
+                      (
+                        await client.query(
+                          `SELECT count(*)::int AS n FROM "${restored.namespace}".web_push_approval_deliveries`,
+                        )
+                      ).rows,
+                    ).toEqual([{ n: index }]);
+                  }
+                } finally {
+                  await client.query(`DROP SCHEMA "${restored.namespace}" CASCADE`);
+                }
+              }
+            }
           } finally {
             await client.query(`DROP SCHEMA IF EXISTS "${namespace}" CASCADE`);
             await client.end();
