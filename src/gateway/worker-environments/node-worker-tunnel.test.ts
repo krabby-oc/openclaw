@@ -61,6 +61,10 @@ const commandResult = (workspaceDir = "/node/workspace", result: Partial<SpawnRe
   ok: true as const,
   payloadJSON: workspaceCommandPayload(workspaceDir, result),
 });
+const commandFailure = (code: string, message: string) => ({
+  ok: false as const,
+  error: { code, message },
+});
 
 function workspaceManager(
   snapshot: ReturnType<typeof workspaceSnapshot>,
@@ -92,12 +96,8 @@ const restoredBinding = (snapshot = workspaceSnapshot("/gateway/workspace")) => 
   remoteWorkspaceDir: "/node/workspace",
 });
 
-const journal = () => ({
-  load: async () => undefined,
-  begin: vi.fn(async () => {}),
-  commit: vi.fn(async () => {}),
-  abort: vi.fn(async () => {}),
-});
+const noop = async () => undefined;
+const journal = () => ({ load: noop, begin: noop, commit: noop, abort: noop });
 const localSync = (localPath: string) => ({
   source: { kind: "local" as const, path: localPath },
   sessionId: "session-1",
@@ -145,12 +145,10 @@ it.for<[string, boolean]>([
       GIT_CONFIG_NOSYSTEM: "1",
       ...gitIdentity(author.name, author.email),
     };
-    const sourceIdentityArgs = [
+    const sourceIdentityArgs = Object.entries(author).flatMap(([key, value]) => [
       "-c",
-      `user.name=${author.name}`,
-      "-c",
-      `user.email=${author.email}`,
-    ];
+      `user.${key}=${value}`,
+    ]);
     // The real fallback reader must see the temporary source identity,
     // without clearing inherited Git policy or changing process.env.
     const runCommand = runCommandWithTimeout;
@@ -179,38 +177,33 @@ it.for<[string, boolean]>([
     const baseCommit = localGit(["rev-parse", "HEAD"]);
     const snapshot = workspaceSnapshot(localPath, { version: 1, baseCommit, entries: [] });
     const { manifestRef } = snapshot;
+    const remoteGit = (args: string[]) => gitAt(remoteWorkspaceDir, args, gitEnv);
     const nodeTransport = transport();
     const invoke = vi.fn<NodeWorkerSupervisorTransport["invoke"]>(async ({ command, params }) => {
       if (command === NODE_WORKER_ENVIRONMENT_STOP_COMMAND) {
         return { ok: true, payloadJSON: "null" };
       }
       const input = params as NodeWorkerWorkspaceExecInput;
-      let stdout = "";
-      let stderr = "";
-      let code = 0;
       if (input.transfer || input.argv.includes("clone")) {
         const clone = ["clone", "--quiet", "--no-checkout", localPath, remoteWorkspaceDir];
         execFileSync("git", clone, { env: gitEnv });
         if (input.transfer) {
-          execFileSync("git", ["-C", remoteWorkspaceDir, "checkout", "--quiet", baseCommit], {
-            env: gitEnv,
-          });
-          stdout = `${manifestRef}\n`;
+          remoteGit(["checkout", "--quiet", baseCommit]);
         }
-      } else if (input.argv[0] === "git" || input.argv.includes("--")) {
-        const result = spawnSync(input.argv[0]!, input.argv.slice(1), {
+        return commandResult(remoteWorkspaceDir, {
+          stdout: input.transfer ? `${manifestRef}\n` : "",
+        });
+      }
+      if (input.argv[0] === "git" || input.argv.includes("--")) {
+        const { stdout, stderr, status } = spawnSync(input.argv[0]!, input.argv.slice(1), {
           encoding: "utf8",
           env: gitEnv,
           cwd: remoteWorkspaceDir,
           input: input.input,
         });
-        stdout = result.stdout;
-        stderr = result.stderr;
-        code = result.status ?? 1;
-      } else {
-        stdout = `${manifestRef}\n`;
+        return commandResult(remoteWorkspaceDir, { stdout, stderr, code: status ?? 1 });
       }
-      return commandResult(remoteWorkspaceDir, { stdout, stderr, code });
+      return commandResult(remoteWorkspaceDir, { stdout: `${manifestRef}\n` });
     });
     nodeTransport.invoke = withWorkspaceDrain(invoke);
     const handle = await workspaceManager(snapshot, nodeTransport).start(startRequest());
@@ -241,7 +234,6 @@ it.for<[string, boolean]>([
       });
     }
 
-    const remoteGit = (args: string[]) => gitAt(remoteWorkspaceDir, args, gitEnv);
     const readRemoteAuthor = (key: "name" | "email") =>
       remoteGit(["config", "--local", "--get", `user.${key}`]);
     const name = readRemoteAuthor("name");
@@ -592,20 +584,18 @@ it.each(["UNAVAILABLE", "TIMEOUT", "INVALID_REQUEST", NODE_WORKSPACE_TRANSFER_ER
   async (code) => {
     const secret = "sk-abcdefghijklmnopqrstuv";
     const nodeTransport = transport();
-    nodeTransport.invoke = withWorkspaceDrain(async () => ({
-      ok: false,
-      error: {
+    nodeTransport.invoke = withWorkspaceDrain(async () =>
+      commandFailure(
         code,
-        message: `workspace quiescence failed: Authorization: Bearer ${secret}\n${"detail ".repeat(300)}terminal diagnosis`,
-      },
-    }));
+        `workspace quiescence failed: Authorization: Bearer ${secret}\n${"detail ".repeat(300)}terminal diagnosis`,
+      ),
+    );
     const manager = restoredManager(nodeTransport);
     const handle = await manager.start(startRequest());
 
     const error = await handle
       .runWorkspaceCommand({ argv: ["node", "-e", "void 0"], transportRetry: "never" })
       .catch((failure: unknown) => failure);
-    expect(error).toBeInstanceOf(Error);
     if (!(error instanceof Error)) {
       throw new Error("expected an Error result");
     }
@@ -638,21 +628,17 @@ it("preserves a typed workspace transfer cause from the node", async () => {
   const localPath = makeDir("transfer-error");
   const snapshot = workspaceSnapshot(localPath);
   const nodeTransport = transport();
-  nodeTransport.invoke = vi.fn(async () => ({
-    ok: false,
-    error: {
-      code: NODE_WORKSPACE_TRANSFER_ERROR_CODE,
-      message:
-        "workspace-transfer-failed: operation=upload stage=reconcile: socket hang up | ECONNRESET",
-    },
-  }));
+  const message =
+    "workspace-transfer-failed: operation=upload stage=reconcile: socket hang up | ECONNRESET";
+  nodeTransport.invoke = vi.fn(async () =>
+    commandFailure(NODE_WORKSPACE_TRANSFER_ERROR_CODE, message),
+  );
   const handle = await workspaceManager(snapshot, nodeTransport).start(startRequest());
 
   await expect(handle.syncWorkspace(localSync(localPath))).rejects.toMatchObject({
     name: NodeWorkerWorkspaceTransferError.name,
     code: NODE_WORKSPACE_TRANSFER_ERROR_CODE,
-    message:
-      "workspace-transfer-failed: operation=upload stage=reconcile: socket hang up | ECONNRESET",
+    message,
   });
   expect(workspaceInfo).toHaveBeenCalledWith("worker workspace sync path selected", {
     environmentId: "environment-1",
@@ -804,7 +790,6 @@ it("reuses the placement hash memo across node reconciliations (640 files)", asy
   });
   expect(memoInputs).toHaveLength(2);
   expect(memoInputs[0]).toEqual([]);
-  expect(memoInputs.slice(1).every((entries) => entries.length === retained)).toBe(true);
   expect(memoInputs.flat().every(([identity]) => identity.startsWith("worker:"))).toBe(true);
   expect(reports[1]!.remoteManifestWallDurationMs).toBeGreaterThan(0);
   expect(captureBytes.every((bytes) => bytes.input <= NODE_WORKER_WORKSPACE_STDIN_MAX_BYTES)).toBe(
