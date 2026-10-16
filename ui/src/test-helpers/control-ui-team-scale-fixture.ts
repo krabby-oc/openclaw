@@ -156,7 +156,7 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
       lastMessagePreview: `Synthetic project ${index + 1}: reviewed the implementation and recorded the next concrete step.`,
     };
   });
-  if (options.sidebarListChurn || options.sidebarLiveChurn) {
+  if (options.sidebarListChurn || options.sidebarLiveChurn || options.sessionEventChurn) {
     for (const [index, row] of sessions.entries()) {
       const owner = people[index % counts.owners]!;
       row.owner = {
@@ -692,6 +692,7 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
         atMs,
         kind: "sessions.changed.active-worker",
         event: "sessions.changed",
+        sessionMutation: { upsert: [row] },
         payload: {
           ...row,
           sessionKey: row.key,
@@ -713,15 +714,16 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
     sidebarLiveChurn: options.sidebarLiveChurn
       ? { equivalentAfterMs: 14_000, quietAfterMs: 15_000, durationMs: 20_000 }
       : undefined,
-    sidebarListChurn: options.sidebarListChurn
-      ? {
-          rows: sessions,
-          viewerProfileId: people[0]!.id,
-          now,
-          defaults: list([]).defaults,
-          owners: list([]).owners,
-        }
-      : undefined,
+    sidebarListChurn:
+      options.sidebarListChurn || options.sessionEventChurn
+        ? {
+            rows: sessions,
+            viewerProfileId: people[0]!.id,
+            now,
+            defaults: list([]).defaults,
+            owners: list([]).owners,
+          }
+        : undefined,
     liveHistory: options.liveRun
       ? {
           sessionId: pinnedRows[0]!.sessionId,
