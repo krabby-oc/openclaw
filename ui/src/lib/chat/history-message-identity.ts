@@ -71,7 +71,7 @@ export function nativeHistoryMessageIdentity(message: unknown): string | null {
   const projection = { ...record };
   delete projection.openclawResponsesInputReplay;
   if (metadata) {
-    projection.__openclaw = projectionMetadata;
+    projection["__openclaw"] = projectionMetadata;
   }
   try {
     // History timestamps and provider replay data are not display identity.
