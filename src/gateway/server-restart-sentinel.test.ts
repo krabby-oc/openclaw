@@ -1,14 +1,7 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createSolidPngBuffer } from "../../test/helpers/image-fixtures.js";
-import type { RuntimeContextFragment } from "../agents/internal-runtime-context.js";
 import type { ChannelPlugin } from "../channels/plugins/types.plugin.js";
-import { buildRestartRecoveryClaimCleanupPatch } from "../config/sessions/restart-recovery-state.js";
 import {
-  appendTranscriptMessage,
-  loadSessionEntry as loadStoredSessionEntry,
   loadTranscriptEvents,
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";

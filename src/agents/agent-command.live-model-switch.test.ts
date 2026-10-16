@@ -6,7 +6,7 @@ import { expectDefined, toStringifiedError } from "@openclaw/normalization-core"
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
-import { setReplyPayloadMetadata, type ReplyPayload } from "../auto-reply/reply-payload.js";
+import { setReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import type { SessionEntry } from "../config/sessions.js";
 import { resolveInternalSessionEffectsIdentity } from "../config/sessions/internal-session-key.js";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
