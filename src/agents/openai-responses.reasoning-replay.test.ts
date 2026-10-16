@@ -1,6 +1,6 @@
 // Verifies OpenAI Responses replay preserves reasoning and response item ids.
 import "../test-utils/prepare-compiled-subprocesses.js";
-import type { AssistantMessage, Model, ToolResultMessage } from "openclaw/plugin-sdk/llm";
+import type { AssistantMessage, Context, Model, ToolResultMessage } from "openclaw/plugin-sdk/llm";
 import { stream } from "openclaw/plugin-sdk/llm";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
@@ -32,26 +32,18 @@ function buildStorelessCustomModel(): Model<"openai-responses"> {
   };
 }
 
-function extractInput(payload: Record<string, unknown> | undefined) {
-  return Array.isArray(payload?.input) ? payload.input : [];
-}
-
-function extractInputTypes(input: unknown[]) {
-  return input
-    .map((item) =>
-      item && typeof item === "object" ? (item as Record<string, unknown>).type : undefined,
-    )
-    .filter((t): t is string => typeof t === "string");
+function isInputRecord(item: unknown): item is Record<string, unknown> {
+  return Boolean(item) && typeof item === "object";
 }
 
 function extractInputMessages(input: unknown[]) {
-  return input.filter(
-    (item): item is Record<string, unknown> =>
-      Boolean(item) &&
-      typeof item === "object" &&
-      (item as Record<string, unknown>).type === "message" &&
-      (item as Record<string, unknown>).role === "assistant",
-  );
+  return input
+    .filter(isInputRecord)
+    .filter((item) => item.type === "message" && item.role === "assistant");
+}
+
+function findInput(input: unknown[], type: string) {
+  return input.filter(isInputRecord).find((item) => item.type === type);
 }
 
 const ZERO_USAGE = createZeroUsageFixture();
@@ -68,32 +60,58 @@ function buildReasoningPart(id = "rs_test") {
   };
 }
 
-function buildAssistantMessage(params: {
-  stopReason: AssistantMessage["stopReason"];
-  content: AssistantMessage["content"];
-}): AssistantMessage {
+function buildAssistantMessage(
+  content: AssistantMessage["content"],
+  stopReason: AssistantMessage["stopReason"] = "stop",
+): AssistantMessage {
   return {
     role: "assistant",
     api: "openai-responses",
     provider: "openai",
     model: "gpt-5.4",
     usage: ZERO_USAGE,
-    stopReason: params.stopReason,
+    stopReason,
     timestamp: Date.now(),
-    content: params.content,
+    content,
+  };
+}
+
+function user(content: string) {
+  return { role: "user" as const, content, timestamp: Date.now() };
+}
+
+function toolConversation(id: string, content: AssistantMessage["content"]) {
+  const toolResult: ToolResultMessage = {
+    role: "toolResult",
+    toolCallId: id,
+    toolName: "noop",
+    content: [{ type: "text", text: "ok" }],
+    isError: false,
+    timestamp: Date.now(),
+  };
+  return {
+    messages: [
+      user("Call noop."),
+      buildAssistantMessage(
+        [...content, { type: "toolCall", id, name: "noop", arguments: {} }],
+        "toolUse",
+      ),
+      toolResult,
+      user("Now reply with ok."),
+    ],
+    tools: [
+      {
+        name: "noop",
+        description: "no-op",
+        parameters: Type.Object({}, { additionalProperties: false }),
+      },
+    ],
   };
 }
 
 async function runAbortedOpenAIResponsesStream(params: {
-  messages: Array<
-    AssistantMessage | ToolResultMessage | { role: "user"; content: string; timestamp: number }
-  >;
-  tools?: Array<{
-    name: string;
-    description: string;
-    parameters: ReturnType<typeof Type.Object>;
-  }>;
-  replayResponsesItemIds?: boolean;
+  messages: Context["messages"];
+  tools?: Context["tools"];
   usePolicyReplayDefault?: boolean;
   model?: Model<"openai-responses">;
 }) {
@@ -111,9 +129,7 @@ async function runAbortedOpenAIResponsesStream(params: {
     },
     {
       apiKey: "test",
-      ...(params.usePolicyReplayDefault
-        ? {}
-        : { replayResponsesItemIds: params.replayResponsesItemIds ?? true }),
+      ...(params.usePolicyReplayDefault ? {} : { replayResponsesItemIds: true }),
       signal: controller.signal,
       onPayload: (nextPayload: unknown) => {
         payload = nextPayload as Record<string, unknown>;
@@ -122,148 +138,60 @@ async function runAbortedOpenAIResponsesStream(params: {
   );
 
   await responseStream.result();
-  const input = extractInput(payload);
+  const input: unknown[] = Array.isArray(payload?.input) ? payload.input : [];
   return {
     input,
-    types: extractInputTypes(input),
+    types: input
+      .filter(isInputRecord)
+      .map((item) => item.type)
+      .filter((t): t is string => typeof t === "string"),
   };
 }
 
 describe("openai-responses reasoning replay", () => {
   it("omits Responses item ids for storeless custom providers while preserving tool call ids", async () => {
-    const assistantToolOnly = buildAssistantMessage({
-      stopReason: "toolUse",
-      content: [
+    const { input, types } = await runAbortedOpenAIResponsesStream({
+      model: buildStorelessCustomModel(),
+      usePolicyReplayDefault: true,
+      ...toolConversation("call_storeless|fc_storeless", [
         buildReasoningPart("rs_storeless"),
         {
           type: "text",
           text: "Checking.",
           textSignature: JSON.stringify({ v: 1, id: "msg_storeless", phase: "final_answer" }),
         },
-        {
-          type: "toolCall",
-          id: "call_storeless|fc_storeless",
-          name: "noop",
-          arguments: {},
-        },
-      ],
-    });
-
-    const toolResult: ToolResultMessage = {
-      role: "toolResult",
-      toolCallId: "call_storeless|fc_storeless",
-      toolName: "noop",
-      content: [{ type: "text", text: "ok" }],
-      isError: false,
-      timestamp: Date.now(),
-    };
-
-    const { input, types } = await runAbortedOpenAIResponsesStream({
-      model: buildStorelessCustomModel(),
-      usePolicyReplayDefault: true,
-      messages: [
-        { role: "user", content: "Call noop.", timestamp: Date.now() },
-        assistantToolOnly,
-        toolResult,
-        { role: "user", content: "Now reply with ok.", timestamp: Date.now() },
-      ],
-      tools: [
-        {
-          name: "noop",
-          description: "no-op",
-          parameters: Type.Object({}, { additionalProperties: false }),
-        },
-      ],
+      ]),
     });
 
     expect(types).toContain("message");
     expect(types).toContain("function_call");
     expect(types).toContain("function_call_output");
 
-    const replayedItemIds = input.filter(
-      (item): item is Record<string, unknown> =>
-        Boolean(item) &&
-        typeof item === "object" &&
-        ["reasoning", "message", "function_call"].includes(
-          String((item as Record<string, unknown>).type),
-        ) &&
-        typeof (item as Record<string, unknown>).id === "string",
-    );
+    const replayedItemIds = input
+      .filter(isInputRecord)
+      .filter(
+        (item) =>
+          ["reasoning", "message", "function_call"].includes(String(item.type)) &&
+          typeof item.id === "string",
+      );
     expect(replayedItemIds).toEqual([]);
 
-    const functionCall = input.find(
-      (item) =>
-        item &&
-        typeof item === "object" &&
-        (item as Record<string, unknown>).type === "function_call",
-    ) as Record<string, unknown> | undefined;
-    const functionCallOutput = input.find(
-      (item) =>
-        item &&
-        typeof item === "object" &&
-        (item as Record<string, unknown>).type === "function_call_output",
-    ) as Record<string, unknown> | undefined;
+    const functionCall = findInput(input, "function_call");
+    const functionCallOutput = findInput(input, "function_call_output");
     expect(functionCall?.call_id).toBeTruthy();
     expect(functionCallOutput?.call_id).toBe(functionCall?.call_id);
   });
 
   it("replays reasoning for tool-call-only turns (OpenAI requires it)", async () => {
-    const assistantToolOnly = buildAssistantMessage({
-      stopReason: "toolUse",
-      content: [
-        buildReasoningPart(),
-        {
-          type: "toolCall",
-          id: "call_123|fc_123",
-          name: "noop",
-          arguments: {},
-        },
-      ],
-    });
-
-    const toolResult: ToolResultMessage = {
-      role: "toolResult",
-      toolCallId: "call_123|fc_123",
-      toolName: "noop",
-      content: [{ type: "text", text: "ok" }],
-      isError: false,
-      timestamp: Date.now(),
-    };
-
-    const { input, types } = await runAbortedOpenAIResponsesStream({
-      messages: [
-        {
-          role: "user",
-          content: "Call noop.",
-          timestamp: Date.now(),
-        },
-        assistantToolOnly,
-        toolResult,
-        {
-          role: "user",
-          content: "Now reply with ok.",
-          timestamp: Date.now(),
-        },
-      ],
-      tools: [
-        {
-          name: "noop",
-          description: "no-op",
-          parameters: Type.Object({}, { additionalProperties: false }),
-        },
-      ],
-    });
+    const { input, types } = await runAbortedOpenAIResponsesStream(
+      toolConversation("call_123|fc_123", [buildReasoningPart()]),
+    );
 
     expect(types).toContain("reasoning");
     expect(types).toContain("function_call");
     expect(types.indexOf("reasoning")).toBeLessThan(types.indexOf("function_call"));
 
-    const functionCall = input.find(
-      (item) =>
-        item &&
-        typeof item === "object" &&
-        (item as Record<string, unknown>).type === "function_call",
-    ) as Record<string, unknown> | undefined;
+    const functionCall = findInput(input, "function_call");
     expect(functionCall?.call_id).toBe("call_123");
     expect(functionCall?.id).toBe("fc_123");
   });
@@ -271,24 +199,17 @@ describe("openai-responses reasoning replay", () => {
   it.each(["commentary"] as const)(
     "replays assistant message id and phase metadata for %s when paired with reasoning",
     async (phase) => {
-      const assistantWithText = buildAssistantMessage({
-        stopReason: "stop",
-        content: [
-          buildReasoningPart(),
-          {
-            type: "text",
-            text: "hello",
-            textSignature: JSON.stringify({ v: 1, id: `msg_${phase}`, phase }),
-          },
-        ],
-      });
+      const assistantWithText = buildAssistantMessage([
+        buildReasoningPart(),
+        {
+          type: "text",
+          text: "hello",
+          textSignature: JSON.stringify({ v: 1, id: `msg_${phase}`, phase }),
+        },
+      ]);
 
       const { input, types } = await runAbortedOpenAIResponsesStream({
-        messages: [
-          { role: "user", content: "Hi", timestamp: Date.now() },
-          assistantWithText,
-          { role: "user", content: "Ok", timestamp: Date.now() },
-        ],
+        messages: [user("Hi"), assistantWithText, user("Ok")],
       });
 
       expect(types).toContain("message");
@@ -304,28 +225,21 @@ describe("openai-responses reasoning replay", () => {
     // After a reasoning drop the sanitizer keeps the phase but removes the msg_*
     // id. The conversion must then emit a unique synthetic id per text block AND
     // retain the phase metadata (issue #88019 review follow-up).
-    const assistantWithPhaseOnly = buildAssistantMessage({
-      stopReason: "stop",
-      content: [
-        {
-          type: "text",
-          text: "commentary",
-          textSignature: JSON.stringify({ v: 1, phase: "commentary" }),
-        },
-        {
-          type: "text",
-          text: "final",
-          textSignature: JSON.stringify({ v: 1, phase: "final_answer" }),
-        },
-      ],
-    });
+    const assistantWithPhaseOnly = buildAssistantMessage([
+      {
+        type: "text",
+        text: "commentary",
+        textSignature: JSON.stringify({ v: 1, phase: "commentary" }),
+      },
+      {
+        type: "text",
+        text: "final",
+        textSignature: JSON.stringify({ v: 1, phase: "final_answer" }),
+      },
+    ]);
 
     const { input } = await runAbortedOpenAIResponsesStream({
-      messages: [
-        { role: "user", content: "Hi", timestamp: Date.now() },
-        assistantWithPhaseOnly,
-        { role: "user", content: "Ok", timestamp: Date.now() },
-      ],
+      messages: [user("Hi"), assistantWithPhaseOnly, user("Ok")],
     });
 
     const messages = extractInputMessages(input);
