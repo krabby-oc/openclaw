@@ -47,7 +47,7 @@ import {
   type SidebarRecentSession,
   type SidebarToolActivity,
 } from "./app-sidebar-session-types.ts";
-import { SessionOrganizerController } from "./session-organizer-controller.ts";
+import { SessionOrganizer } from "./session-organizer.ts";
 import { SidebarAgentRoster, renderSidebarPinnedSession } from "./sidebar-agent-roster.tsx";
 import type { createSidebarScroll } from "./sidebar-context-controller.ts";
 import { equalSidebarContext, selectSidebarContext } from "./sidebar-context-state.ts";
@@ -70,7 +70,7 @@ export class AppSidebarOwner extends AppSidebarSessionNavigationElement implemen
   override sidebarTools: ReadonlyMap<string, SidebarToolActivity> = new Map();
   override sidebarObserverDigests: ReadonlyMap<string, SessionObserverDigest> = new Map();
 
-  override readonly sessionOrganizer = new SessionOrganizerController(this);
+  override readonly sessionOrganizer = new SessionOrganizer(this, () => this.requestUpdate());
   override readonly sidebarMenus = new SidebarMenusController(this);
   readonly people = new SidebarPeoplePreferences(() => this.requestUpdate());
   peopleView?: ReturnType<typeof createSidebarPeople>;
