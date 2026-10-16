@@ -282,6 +282,13 @@ export type ChatItem =
     }
   | { kind: "question"; key: string; questionId: string; startedAt: number };
 
+export type SystemEventItem = Extract<ChatItem, { kind: "notice" | "divider" }>;
+export type SystemEventGroup = {
+  kind: "system-event-group";
+  key: string;
+  events: SystemEventItem[];
+};
+
 export type ChatStreamSegment = {
   /** Input observed when live commentary first arrived; omitted for history replay. */
   afterUserSendId?: string;

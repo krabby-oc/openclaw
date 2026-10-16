@@ -1,12 +1,5 @@
-import type { ChatItem } from "../../lib/chat/chat-types.ts";
+import type { SystemEventGroup, SystemEventItem } from "../../lib/chat/chat-types.ts";
 import type { coalesceAgentRunFrames } from "./chat-agent-run-grouping.ts";
-
-export type SystemEventItem = Extract<ChatItem, { kind: "notice" | "divider" }>;
-export type SystemEventGroup = {
-  kind: "system-event-group";
-  key: string;
-  events: SystemEventItem[];
-};
 
 export type SystemEventRenderItem =
   | ReturnType<typeof coalesceAgentRunFrames>[number]

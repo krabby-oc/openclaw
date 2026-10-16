@@ -2115,10 +2115,10 @@ button.chat-reply-attribution__target:disabled {
 }
 
 .chat-system-events__summary {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(24px, 1fr) minmax(0, auto) minmax(24px, 1fr);
   align-items: center;
-  gap: 4px 8px;
+  gap: 8px;
   min-height: 32px;
   padding-block: 4px;
   border-radius: 4px;
@@ -2139,6 +2139,16 @@ button.chat-reply-attribution__target:disabled {
   color: var(--text);
 }
 
+.chat-system-events__label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 8px;
+  min-width: 0;
+  text-align: center;
+}
+
 .chat-system-events__chevron {
   display: inline-flex;
   flex: 0 0 12px;
@@ -2155,7 +2165,6 @@ button.chat-reply-attribution__target:disabled {
 }
 
 .chat-system-events__line {
-  flex: 1 1 24px;
   height: 1px;
   background: var(--border);
 }

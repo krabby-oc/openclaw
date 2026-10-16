@@ -1,5 +1,5 @@
 import type { JSX } from "@solidjs/web";
-import { For, Match, Show, Switch, createEffect, createMemo, onCleanup, untrack } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, untrack } from "solid-js";
 import type {
   SessionParticipant,
   SessionParticipantIdentity,
@@ -26,18 +26,14 @@ import {
   type SessionRowBadgesParams,
 } from "../session-row-badge-presentation.ts";
 import type { resolveSidebarSessionSubtitle } from "../session-row-subtitle.ts";
-import { SessionRunVisibilityController } from "../session-run-visibility-controller.ts";
+import { createSessionRunVisibility as sessionRunVisibility } from "../session-run-visibility-controller.ts";
 import { ChannelAvatar } from "./channel-avatar.tsx";
 import { Icon } from "./icon.tsx";
 import { SessionOwnerAvatar, SessionOwnerChip } from "./session-owner-chip.tsx";
 import "../tooltip.ts";
 
 export type SessionRunVisibility = typeof sessionRunVisibility;
-export function sessionRunVisibility(): (element: Element) => void {
-  const controller = new SessionRunVisibilityController();
-  onCleanup(() => controller.disconnect());
-  return (element) => controller.connect(element);
-}
+export { sessionRunVisibility };
 
 function SessionAttentionIcon(props: { attention: SidebarSessionAttention }) {
   const parts = createMemo(() => sessionAttentionTooltipParts(props.attention, t));
@@ -48,7 +44,10 @@ function SessionAttentionIcon(props: { attention: SidebarSessionAttention }) {
     <Show when={props.attention.kind !== "none"}>
       <openclaw-tooltip prop:content={parts().preview ? "" : parts().status} open-on-click>
         <span
-          class={`sidebar-session-attention__icon sidebar-session-attention__icon--${props.attention.kind}`}
+          class={[
+            "sidebar-session-attention__icon",
+            `sidebar-session-attention__icon--${props.attention.kind}`,
+          ]}
           data-session-attention={props.attention.kind}
           role={label() ? "img" : undefined}
           aria-label={label()}
@@ -199,7 +198,7 @@ export function SessionRowBadges(props: SessionRowBadgesParams) {
           {(badge) => (
             <openclaw-tooltip prop:content={badge().label}>
               <span
-                class={`session-row-badge session-row-badge--${badge().modifier}`}
+                class={["session-row-badge", `session-row-badge--${badge().modifier}`]}
                 data-pull-request-state={badge().pullRequestState}
                 data-placement-state={badge().placementState}
                 data-disk-space-status={badge().diskSpaceStatus}
@@ -288,7 +287,10 @@ function SessionIdleState(props: { session: SidebarRecentSession }) {
       <Show when={state()}>
         {(current) => (
           <span
-            class={`sidebar-child-session__status sidebar-child-session__status--${props.session.status}`}
+            class={[
+              "sidebar-child-session__status",
+              `sidebar-child-session__status--${props.session.status}`,
+            ]}
             role="img"
             aria-label={current().label}
             title={current().label}

@@ -85,6 +85,24 @@ suite.define(() => {
         );
         await answer.waitFor();
         expect(await prompt.isVisible()).toBe(true);
+        const expectCenteredSummary = async () => {
+          const geometry = await summary.evaluate((element) => {
+            const summaryRect = element.getBoundingClientRect();
+            const labelRect = element
+              .querySelector(".chat-system-events__label")!
+              .getBoundingClientRect();
+            const lines = Array.from(element.querySelectorAll(".chat-system-events__line"));
+            return {
+              offset:
+                labelRect.left + labelRect.width / 2 - summaryRect.left - summaryRect.width / 2,
+              lineWidths: lines.map((line) => line.getBoundingClientRect().width),
+            };
+          });
+          expect(Math.abs(geometry.offset)).toBeLessThan(1);
+          expect(geometry.lineWidths).toHaveLength(2);
+          expect(Math.abs(geometry.lineWidths[0]! - geometry.lineWidths[1]!)).toBeLessThan(1);
+        };
+        await expectCenteredSummary();
         const dir = createControlUiE2eArtifactDir("system-events-after");
         const capture = async (filename: string, content = [summary]) => {
           const frame = await takeControlUiScreenshotFrame(page, surface, content, {
@@ -119,6 +137,7 @@ suite.define(() => {
         expect(
           await summary.evaluate((element) => element.scrollWidth <= element.clientWidth),
         ).toBe(true);
+        await expectCenteredSummary();
         await capture("narrow.png");
       },
     );

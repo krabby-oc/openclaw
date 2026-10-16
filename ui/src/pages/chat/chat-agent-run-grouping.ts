@@ -1,12 +1,11 @@
 import { readSessionMessageIdentity } from "@openclaw/gateway-client/browser";
 import { asNullableRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
-import type { MessageGroup } from "../../lib/chat/chat-types.ts";
+import type { MessageGroup, SystemEventGroup } from "../../lib/chat/chat-types.ts";
 import {
   assistantMessageCanOwnTurnActions,
   assistantMessageIsInterrupted,
   resolveAssistantReplyPhase,
 } from "./chat-assistant-reply.ts";
-import type { SystemEventGroup } from "./chat-system-event-grouping.ts";
 import {
   groupEndsRunInFailure,
   joinActivityRuns,

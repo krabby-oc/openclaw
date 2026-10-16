@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import { Icon } from "../../../components/solid/icon.tsx";
+import type { SystemEventGroup, SystemEventItem } from "../../../lib/chat/chat-types.ts";
 import { t } from "../../../lib/reactive/i18n.ts";
-import type { SystemEventGroup, SystemEventItem } from "../chat-system-event-grouping.ts";
 import { ChatDivider, ChatNotice } from "./chat-divider.tsx";
 
 function SystemEvent(props: { item: SystemEventItem }) {
@@ -31,20 +31,25 @@ export function ChatSystemEvents(props: { item: SystemEventGroup }) {
       onToggle={(event) => setExpanded(event.currentTarget.open)}
     >
       <summary class="chat-system-events__summary">
-        <span class="chat-system-events__chevron" aria-hidden="true">
-          <Icon name="chevronRight" />
-        </span>
-        <span>
-          {t(
-            props.item.events.length === 1 ? "chat.systemNotice.event" : "chat.systemNotice.events",
-            { count: String(props.item.events.length) },
-          )}
-        </span>
-        <Show when={deliveryWarning()}>
-          <span class="chat-system-events__warning">
-            {t("chat.systemNotice.updatesNotDelivered")}
+        <span class="chat-system-events__line" aria-hidden="true" />
+        <span class="chat-system-events__label">
+          <span class="chat-system-events__chevron" aria-hidden="true">
+            <Icon name="chevronRight" />
           </span>
-        </Show>
+          <span>
+            {t(
+              props.item.events.length === 1
+                ? "chat.systemNotice.event"
+                : "chat.systemNotice.events",
+              { count: String(props.item.events.length) },
+            )}
+          </span>
+          <Show when={deliveryWarning()}>
+            <span class="chat-system-events__warning">
+              {t("chat.systemNotice.updatesNotDelivered")}
+            </span>
+          </Show>
+        </span>
         <span class="chat-system-events__line" aria-hidden="true" />
       </summary>
       <Show when={expanded()}>
