@@ -2,8 +2,8 @@ import {
   recordBackupRunInDatabase,
   type PreparedBackupRunRecord,
 } from "./backup-run-records.kernel.js";
-import { assertOpenClawStateDatabaseOwner } from "./openclaw-state-db-maintenance.js";
 import { isStatePostgres } from "./openclaw-state-db-engine.js";
+import { assertOpenClawStateDatabaseOwner } from "./openclaw-state-db-maintenance.js";
 import {
   withExistingOpenClawStateDatabaseArtifactPreservingReadOnly,
   withExistingOpenClawStateDatabaseCurrentReadOnly,
