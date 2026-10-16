@@ -1,36 +1,22 @@
-import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
-import { processCompletionsStream } from "./openai-completions-stream.js";
+import {
+  collectStream,
+  replyContext,
+  startSse,
+  streamFixture,
+  withServer,
+  writeSse,
+} from "./openai-completions-suite.test-support.js";
 import { createOpenAICompletionsTransportStreamFn } from "./openai-completions-transport.js";
 import {
-  type CapturedStreamEvent,
-  createAssistantOutput,
   createDeepSeekCompletionsModel,
   makeCompletionsChunk,
   makeCompletionsModel,
-  streamChunks,
 } from "./openai-completions.test-support.js";
-
-function streamFixture(model = createDeepSeekCompletionsModel()) {
-  const output = createAssistantOutput(model);
-  const events: CapturedStreamEvent[] = [];
-  const run = (
-    chunks: readonly unknown[],
-    options?: Parameters<typeof processCompletionsStream>[4],
-  ) =>
-    processCompletionsStream(
-      streamChunks(chunks),
-      output,
-      model,
-      { push: (event) => events.push(event) },
-      options,
-    );
-  return { output, events, run };
-}
 
 describe("openai completions DSML", () => {
   it("rejects a nested DSML wrapper before the original outer close", async () => {
-    const { output, events, run } = streamFixture();
+    const { output, events, run } = streamFixture(createDeepSeekCompletionsModel());
 
     await expect(
       run([
@@ -47,14 +33,10 @@ describe("openai completions DSML", () => {
   });
 
   it("does not accept a different DSML wrapper kind as the outer close", async () => {
-    const { output, run } = streamFixture();
+    const { output, text } = streamFixture(createDeepSeekCompletionsModel());
 
-    await run([
-      makeCompletionsChunk({
-        content:
-          '<|DSML|tool_calls><|DSML|invoke name="read">{"path":"/tmp/mismatch.md"}</|DSML|invoke></|DSML|function_calls>',
-      }),
-      makeCompletionsChunk({}, "stop"),
+    await text([
+      '<|DSML|tool_calls><|DSML|invoke name="read">{"path":"/tmp/mismatch.md"}</|DSML|invoke></|DSML|function_calls>',
     ]);
 
     expect(output.stopReason).toBe("stop");
@@ -62,17 +44,13 @@ describe("openai completions DSML", () => {
   });
 
   it("ignores an incomplete invoke-like prefix before a valid invoke", async () => {
-    const { output, run } = streamFixture();
+    const { output, text } = streamFixture(createDeepSeekCompletionsModel());
     const content =
       "<|DSML|tool_calls>literal <|DSML|invoke marker " +
       '<|DSML|invoke name="read">{"path":"/tmp/valid.md"}</|DSML|invoke>' +
       "</|DSML|tool_calls>";
 
-    await run(
-      Array.from(content, (char) => makeCompletionsChunk({ content: char })).concat([
-        makeCompletionsChunk({}, "stop"),
-      ]),
-    );
+    await text(content);
 
     expect(output.stopReason).toBe("toolUse");
     expect(output.content).toEqual([
@@ -86,7 +64,7 @@ describe("openai completions DSML", () => {
   });
 
   it("does not recover a nested call hidden inside a nameless invoke", async () => {
-    const { output, events, run } = streamFixture();
+    const { output, events, run } = streamFixture(createDeepSeekCompletionsModel());
     const content =
       "<|DSML|tool_calls><|DSML|invoke><|DSML|tool_calls>" +
       '<|DSML|invoke name="read">{"path":"/tmp/bypass"}</|DSML|invoke>' +
@@ -100,14 +78,14 @@ describe("openai completions DSML", () => {
   });
 
   it("does not authorize recovered DeepSeek DSML calls when the stream omits a terminal", async () => {
-    const { output, run } = streamFixture();
+    const { output, text } = streamFixture(createDeepSeekCompletionsModel());
 
-    await run([
-      makeCompletionsChunk({
-        content:
-          '<|DSML|tool_calls><|DSML|invoke name="read">{"path":"/tmp/partial.md"}</|DSML|invoke></|DSML|tool_calls>',
-      }),
-    ]);
+    await text(
+      [
+        '<|DSML|tool_calls><|DSML|invoke name="read">{"path":"/tmp/partial.md"}</|DSML|invoke></|DSML|tool_calls>',
+      ],
+      null,
+    );
 
     expect(output.stopReason).toBe("stop");
     expect(output.content).toEqual([]);
@@ -118,77 +96,53 @@ describe("openai completions DSML", () => {
     { finishReason: "stop", allowed: true, code: "" },
     { finishReason: "length", allowed: false, code: "" },
   ])("gates HTTP DSML $finishReason '$code'", async ({ finishReason, allowed, code }) => {
-    const server = createServer((req, res) => {
-      req.resume();
-      req.on("end", () => {
-        res.writeHead(200, {
-          "content-type": "text/event-stream; charset=utf-8",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        });
+    await withServer(
+      (_req, res) => {
+        startSse(res, true);
         const content = `<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="exec"><｜｜DSML｜｜parameter name="code" string="true">${code}</｜｜DSML｜｜parameter></｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>`;
         for (const char of content) {
-          res.write(`data: ${JSON.stringify(makeCompletionsChunk({ content: char }))}\n\n`);
+          writeSse(res, makeCompletionsChunk({ content: char }));
         }
-        res.write(`data: ${JSON.stringify(makeCompletionsChunk({}, finishReason))}\n\n`);
+        writeSse(res, makeCompletionsChunk({}, finishReason));
         res.end("data: [DONE]\n\n");
-      });
-    });
-
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", resolve);
-    });
-    try {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        throw new Error("Missing loopback server address");
-      }
-      const model = makeCompletionsModel({
-        ...createDeepSeekCompletionsModel(),
-        baseUrl: `http://127.0.0.1:${address.port}/v1`,
-      });
-      const stream = await createOpenAICompletionsTransportStreamFn()(
-        model,
-        {
-          systemPrompt: "system",
-          messages: [{ role: "user", content: "Read the file", timestamp: Date.now() }],
-          tools: [],
-        },
-        { apiKey: "test-key" },
-      );
-
-      const events = [];
-      for await (const event of stream) {
-        events.push(event);
-      }
-      const terminal = events.at(-1);
-      if (finishReason === "content_filter") {
-        expect(terminal).toMatchObject({
-          type: "error",
-          reason: "error",
-          error: {
-            stopReason: "error",
-            errorMessage: "Provider finish_reason: content_filter",
-            content: [],
-          },
+      },
+      async (baseUrl) => {
+        const model = makeCompletionsModel({
+          ...createDeepSeekCompletionsModel(),
+          baseUrl,
         });
-      } else {
-        expect(terminal).toMatchObject({
-          type: "done",
-          reason: allowed ? "toolUse" : "length",
-          message: {
-            stopReason: allowed ? "toolUse" : "length",
-            content: allowed ? [{ type: "toolCall", name: "exec", arguments: { code } }] : [],
-          },
-        });
-      }
-      expect(events.filter((event) => event.type === "toolcall_end")).toHaveLength(allowed ? 1 : 0);
-      expect(events.filter((event) => event.type === "text_delta")).toEqual([]);
-    } finally {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
-    }
+        const stream = await createOpenAICompletionsTransportStreamFn()(
+          model,
+          replyContext("Read the file"),
+          { apiKey: "test-key" },
+        );
+        const { events, terminal } = await collectStream(stream);
+        if (finishReason === "content_filter") {
+          expect(terminal).toMatchObject({
+            type: "error",
+            reason: "error",
+            error: {
+              stopReason: "error",
+              errorMessage: "Provider finish_reason: content_filter",
+              content: [],
+            },
+          });
+        } else {
+          expect(terminal).toMatchObject({
+            type: "done",
+            reason: allowed ? "toolUse" : "length",
+            message: {
+              stopReason: allowed ? "toolUse" : "length",
+              content: allowed ? [{ type: "toolCall", name: "exec", arguments: { code } }] : [],
+            },
+          });
+        }
+        expect(events.filter((event) => event.type === "toolcall_end")).toHaveLength(
+          allowed ? 1 : 0,
+        );
+        expect(events.filter((event) => event.type === "text_delta")).toEqual([]);
+      },
+    );
   });
 
   it("parses repeated DeepSeek DSML calls with response-unique ids", async () => {
@@ -198,7 +152,7 @@ describe("openai completions DSML", () => {
       '<｜DSML｜tool_calls>\n<｜DSML｜invoke name="session_status">\n<｜DSML｜parameter name="sessionKey" string="true">current</｜DSML｜parameter>\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>';
 
     const runOnce = async () => {
-      const { output, run } = streamFixture();
+      const { output, run } = streamFixture(createDeepSeekCompletionsModel());
       await run([makeCompletionsChunk({ content }, "stop")]);
       return output.content;
     };
@@ -232,12 +186,9 @@ describe("openai completions DSML", () => {
       body: '<|DSML|invoke name="read"><|DSML|parameter name="path">/tmp/unexecuted</｜DSML｜parameter></|DSML|invoke>',
     },
   ])("does not authorize DSML with $name", async ({ body }) => {
-    const { output, events, run } = streamFixture();
+    const { output, events, text } = streamFixture(createDeepSeekCompletionsModel());
     const content = `<|DSML|tool_calls>${body}</|DSML|tool_calls>`;
-    await run([
-      ...Array.from(content, (char) => makeCompletionsChunk({ content: char })),
-      makeCompletionsChunk({}, "stop"),
-    ]);
+    await text(content);
     expect(output.stopReason).toBe("stop");
     expect(output.content).toEqual([]);
     expect(events.filter((event) => event.type?.startsWith("toolcall_"))).toEqual([]);

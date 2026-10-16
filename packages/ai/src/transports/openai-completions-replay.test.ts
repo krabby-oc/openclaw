@@ -20,30 +20,22 @@ import {
 } from "./openai-completions.test-support.js";
 import { getCompat } from "./openai-transport-params.js";
 
-function expectAbsent(
-  assistant: unknown,
-  fields = ["reasoning_details", "reasoning", "reasoning_text"],
-) {
+const reasoningFields = ["reasoning_details", "reasoning", "reasoning_text"];
+const allReasoningFields = [...reasoningFields, "reasoning_content"];
+
+function expectAbsent(assistant: unknown, fields = reasoningFields) {
   for (const field of fields) {
     expect(assistant).not.toHaveProperty(field);
   }
 }
 
-function toolReplay(
-  model: string,
-  stopReason: string,
-  content: unknown[],
-  toolName: string,
-  result: string,
-  user: string,
-  next: string,
-) {
+function toolReplay(model: string, stopReason: string, content: unknown[], toolName: string) {
   return buildOpenAICompletionsParams(
     openRouterModel,
     {
       systemPrompt: "system",
       messages: [
-        { role: "user", content: user },
+        { role: "user", content: "hello" },
         {
           role: "assistant",
           provider: "openrouter",
@@ -53,8 +45,8 @@ function toolReplay(
           timestamp: 0,
           content,
         },
-        makeTextToolResult("call_1", toolName, result, false, 1),
-        { role: "user", content: next },
+        makeTextToolResult("call_1", toolName, "ok", false, 1),
+        { role: "user", content: "again" },
       ],
       tools: [],
     } as never,
@@ -63,45 +55,29 @@ function toolReplay(
 }
 
 describe("buildOpenAICompletionsParams sanitizes reasoning replay fields", () => {
-  it.each(["reasoning_text"])(
-    "strips %s from stock OpenAI Chat Completions assistant replay",
-    (thinkingSignature) => {
-      const assistant = getAssistantMessage(buildReplayParams(openAIModel, thinkingSignature));
+  it("strips reasoning_text from stock OpenAI assistant replay", () => {
+    const assistant = getAssistantMessage(buildReplayParams(openAIModel, "reasoning_text"));
 
-      expectAbsent(assistant, [
-        "reasoning_details",
-        "reasoning_content",
-        "reasoning",
-        "reasoning_text",
-      ]);
+    expectAbsent(assistant, allReasoningFields);
+  });
+
+  it.each(["reasoning_details", "reasoning_text"])(
+    "normalizes OpenRouter %s to reasoning",
+    (field) => {
+      const assistant = getAssistantMessage(buildReplayParams(openRouterModel, field));
+      expect(assistant).not.toHaveProperty(field);
+      expect(assistant.reasoning).toBe("Need to answer politely.");
     },
   );
-
-  it("normalizes OpenRouter string reasoning_details to reasoning", () => {
-    const assistant = getAssistantMessage(buildReplayParams(openRouterModel, "reasoning_details"));
-
-    expect(assistant).not.toHaveProperty("reasoning_details");
-    expect(assistant.reasoning).toBe("Need to answer politely.");
-  });
 
   it.each([
     ["Anthropic", openRouterAnthropicModel],
     ["xAI", openRouterXaiModel],
   ] as const)("strips OpenRouter %s non-replayable reasoning fields", (_label, model) => {
-    for (const thinkingSignature of [
-      "reasoning_details",
-      "reasoning_content",
-      "reasoning",
-      "reasoning_text",
-    ]) {
+    for (const thinkingSignature of allReasoningFields) {
       const assistant = getAssistantMessage(buildReplayParams(model, thinkingSignature));
 
-      expectAbsent(assistant, [
-        "reasoning_details",
-        "reasoning_content",
-        "reasoning",
-        "reasoning_text",
-      ]);
+      expectAbsent(assistant, allReasoningFields);
     }
   });
 
@@ -114,9 +90,6 @@ describe("buildOpenAICompletionsParams sanitizes reasoning replay fields", () =>
         { type: "toolCall", id: "call_1", name: "read_file", arguments: { path: "config.json" } },
       ],
       "read_file",
-      "{ }",
-      "read config",
-      "continue",
     );
 
     const assistantMessages = params.messages.filter((msg) => msg.role === "assistant");
@@ -125,58 +98,35 @@ describe("buildOpenAICompletionsParams sanitizes reasoning replay fields", () =>
     }
   });
 
-  it.each([["Z.AI", nativeZaiModel]] as const)(
-    "preserves native %s reasoning_content replay",
-    (_label, model) => {
-      const assistant = getAssistantMessage(buildReplayParams(model, "reasoning_content"));
+  it("preserves native Z.AI reasoning_content replay", () => {
+    const assistant = getAssistantMessage(buildReplayParams(nativeZaiModel, "reasoning_content"));
 
-      expect(assistant.reasoning_content).toBe("Need to answer politely.");
-    },
-  );
+    expect(assistant.reasoning_content).toBe("Need to answer politely.");
+  });
 
-  it.each([["DeepSeek", nativeDeepSeekModel]] as const)(
-    "strips non-native %s reasoning replay fields",
-    (_label, model) => {
-      const assistant = getAssistantMessage(buildReplayParams(model, "reasoning_details"));
+  it("strips non-native DeepSeek reasoning replay fields", () => {
+    const assistant = getAssistantMessage(
+      buildReplayParams(nativeDeepSeekModel, "reasoning_details"),
+    );
 
-      expectAbsent(assistant);
-    },
-  );
-
-  it("normalizes OpenRouter reasoning_text to reasoning", () => {
-    const assistant = getAssistantMessage(buildReplayParams(openRouterModel, "reasoning_text"));
-
-    expect(assistant).not.toHaveProperty("reasoning_text");
-    expect(assistant.reasoning).toBe("Need to answer politely.");
+    expectAbsent(assistant);
   });
 
   it.each([
-    {
-      label: "preserves reasoning_content replay for custom reasoning model metadata",
-      model: customQwenReasoningModel,
-      assertSanitizedFields: true,
-    },
-    {
-      label: "preserves DeepSeek-style reasoning_content replay for Xiaomi MiMo",
-      model: xiaomiModel,
-      assertSanitizedFields: true,
-    },
-    {
-      label: "preserves Kimi K2.7 reasoning_content replay with stale reasoning metadata",
-      model: staleKimiK27Model,
-      assertSanitizedFields: true,
-    },
-    {
-      label: "preserves reasoning_content replay for suffixed reasoning model ids",
-      model: { ...customMiMoProxyModel, id: "xiaomi/mimo-v2.5-pro:cloud", reasoning: false },
-      assertSanitizedFields: false,
-    },
-    {
-      label: "preserves reasoning_content replay for prefixed reasoning model ids",
-      model: { ...customKimiProxyModel, id: "hf:moonshotai/kimi-k2-thinking", reasoning: false },
-      assertSanitizedFields: false,
-    },
-  ] as const)("$label", ({ model, assertSanitizedFields }) => {
+    ["custom reasoning metadata", customQwenReasoningModel, true],
+    ["Xiaomi MiMo", xiaomiModel, true],
+    ["stale Kimi metadata", staleKimiK27Model, true],
+    [
+      "suffixed model id",
+      { ...customMiMoProxyModel, id: "xiaomi/mimo-v2.5-pro:cloud", reasoning: false },
+      false,
+    ],
+    [
+      "prefixed model id",
+      { ...customKimiProxyModel, id: "hf:moonshotai/kimi-k2-thinking", reasoning: false },
+      false,
+    ],
+  ] as const)("preserves reasoning_content for %s", (_label, model, assertSanitizedFields) => {
     const assistant = getAssistantMessage(buildReplayParams(model, "reasoning_content"));
 
     expect(assistant.reasoning_content).toBe("Need to answer politely.");
@@ -194,7 +144,6 @@ describe("buildOpenAICompletionsParams sanitizes reasoning replay fields", () =>
       baseUrl: "https://opencode.ai/zen/v1",
       reasoning: false,
       contextWindow: 65_536,
-      maxTokens: 8192,
     });
     const assistant = getAssistantMessage(buildReplayParams(model, "reasoning_content"));
 
@@ -217,9 +166,6 @@ describe("buildOpenAICompletionsParams sanitizes reasoning replay fields", () =>
         },
       ],
       "lookup",
-      "sunny",
-      "lookup",
-      "answer",
     );
 
     const assistant = getAssistantMessage(params);
