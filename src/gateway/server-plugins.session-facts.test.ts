@@ -11,7 +11,10 @@ import {
 import { applyLoggingConfig, resetLogger } from "../logging/logger.js";
 import { registerSecretValueForRedaction } from "../logging/secret-redaction-registry.js";
 import { resetSecretRedactionRegistryForTest } from "../logging/secret-redaction-registry.test-support.js";
-import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
+import {
+  withPluginRuntimeGatewayContextResolver,
+  withPluginRuntimeGatewayRequestScope,
+} from "../plugins/runtime/gateway-request-scope.js";
 import { createPluginRuntime } from "../plugins/runtime/index.js";
 import type {
   RuntimeSessionFactsSelection,
@@ -22,14 +25,18 @@ import { AsyncWorkScope } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { emitUserProfilesChanged } from "../state/user-profile-events.js";
 import { createOpenClawTestState } from "../test-utils/openclaw-test-state.js";
-import { registerChatAbortController } from "./chat-abort.js";
 import { createFixture, sessionKey } from "./control-ui-session-pr-access.test-support.js";
 import { bumpGatewayAccessRevision } from "./gateway-access-revision.js";
 import { createRequestGatewayMethodRegistry } from "./server-methods.js";
+import {
+  captureRpcTargetForTest,
+  registerRpcSourceForTest,
+} from "./server-methods/rpc-source-fixtures.test-support.js";
 import { retainSessionListForegroundWork } from "./session-projection-work.js";
 import { getSessionRowProjection } from "./session-row-projection-access.js";
 import { publishTranscriptFields } from "./session-row-projection-record.js";
 import * as transcriptBackfill from "./session-row-transcript-backfill.js";
+import { claimRpcSourceForTest } from "./test-helpers.rpc-source.js";
 
 type Fixture = Awaited<ReturnType<typeof createFixture>>;
 let state: Awaited<ReturnType<typeof createOpenClawTestState>> | undefined;
@@ -272,20 +279,36 @@ describe("trusted plugin selected session facts", () => {
     withFixture(async (fixture) => {
       const release = retainSessionListForegroundWork();
       const selected = () => withSelectedFacts(fixture, async (value) => value);
-      let registration: ReturnType<typeof registerChatAbortController> | undefined;
+      let registration: ReturnType<typeof registerRpcSourceForTest> | undefined;
+      let releaseClaim: (() => void) | undefined;
       try {
         expect((await selected()).sessions[0]?.run).toBe("idle");
-        registration = registerChatAbortController({
-          chatAbortControllers: fixture.context.chatAbortControllers,
-          runId: "selected-transient-run",
-          sessionId: fixture.sessionId,
+        const target = captureRpcTargetForTest({
           sessionKey,
+          sessionId: fixture.sessionId,
           agentId: "main",
-          timeoutMs: 60_000,
-          kind: "agent",
         });
+        registration = withPluginRuntimeGatewayContextResolver(
+          fixture.context.resolveGatewayContext,
+          () =>
+            registerRpcSourceForTest({
+              storeScope: target.storeScope,
+              runId: "selected-transient-run",
+              sessionId: fixture.sessionId,
+              sessionKey,
+              agentId: "main",
+              kind: "agent",
+            }),
+        );
+        const source = registration.entry;
+        releaseClaim = await withPluginRuntimeGatewayContextResolver(
+          fixture.context.resolveGatewayContext,
+          () => claimRpcSourceForTest(source),
+        );
         const active = await selected();
         expect(active.sessions[0]?.run).toBe("active");
+        releaseClaim();
+        releaseClaim = undefined;
         registration.cleanup();
         registration = undefined;
         const idle = await selected();
@@ -293,6 +316,7 @@ describe("trusted plugin selected session facts", () => {
         expect(idle.revision).not.toBe(active.revision);
         expect(await selected()).toBe(idle);
       } finally {
+        releaseClaim?.();
         registration?.cleanup();
         release();
       }
@@ -304,7 +328,8 @@ describe("trusted plugin selected session facts", () => {
       const entered = createDeferredCore();
       const release = createDeferredCore();
       const selected = () => withSelectedFacts(fixture, async (value) => value);
-      let registration: ReturnType<typeof registerChatAbortController> | undefined;
+      let registration: ReturnType<typeof registerRpcSourceForTest> | undefined;
+      let releaseClaim: (() => void) | undefined;
       let reading: Promise<RuntimeSessionFactsSelectionResult> | undefined;
       let unsubscribe: (() => void) | undefined;
       try {
@@ -331,18 +356,33 @@ describe("trusted plugin selected session facts", () => {
         );
         const publications = vi.fn();
         unsubscribe = sessionChanges.subscribe(publications);
-        registration = registerChatAbortController({
-          chatAbortControllers: fixture.context.chatAbortControllers,
-          runId: "selected-run-during-preparation",
-          sessionId: fixture.sessionId,
+        const target = captureRpcTargetForTest({
           sessionKey,
+          sessionId: fixture.sessionId,
           agentId: "main",
-          timeoutMs: 60_000,
-          kind: "agent",
         });
+        registration = withPluginRuntimeGatewayContextResolver(
+          fixture.context.resolveGatewayContext,
+          () =>
+            registerRpcSourceForTest({
+              storeScope: target.storeScope,
+              runId: "selected-run-during-preparation",
+              sessionId: fixture.sessionId,
+              sessionKey,
+              agentId: "main",
+              kind: "agent",
+            }),
+        );
+        const source = registration.entry;
+        releaseClaim = await withPluginRuntimeGatewayContextResolver(
+          fixture.context.resolveGatewayContext,
+          () => claimRpcSourceForTest(source),
+        );
         release.resolve();
         const active = await withinTest(reading, signal);
         expect(active.sessions[0]?.run).toBe("active");
+        releaseClaim();
+        releaseClaim = undefined;
         registration.cleanup();
         registration = undefined;
         expect(publications).not.toHaveBeenCalled();
@@ -354,6 +394,7 @@ describe("trusted plugin selected session facts", () => {
         release.resolve();
         await reading?.catch(() => {});
         unsubscribe?.();
+        releaseClaim?.();
         registration?.cleanup();
         releaseForeground();
       }

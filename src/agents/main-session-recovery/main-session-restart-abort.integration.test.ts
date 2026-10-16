@@ -22,6 +22,7 @@ import {
   getAgentEventLifecycleGeneration,
   rotateAgentEventLifecycleGeneration,
 } from "../../infra/agent-events.js";
+import { beginSessionEffect } from "../../sessions/session-controller.lifecycle.js";
 import {
   closeOpenClawAgentDatabasesAsync,
   openOpenClawAgentDatabase,
@@ -135,7 +136,7 @@ it.each([
       markRestartAbortedMainSessions({
         resolveGatewayContext: () => undefined,
         stateDir: state.stateDir,
-        activeRuns: [{ sessionKey, sessionId, runId, lifecycleGeneration }],
+        activeRuns: [{ ...target, sessionId, runId, lifecycleGeneration }],
         isActiveRun: () => isActive,
       });
     if (
@@ -228,15 +229,18 @@ it.each([
     try {
       if (order === "persisted interruption") {
         const info = vi.spyOn(mainSessionRecoveryLog, "info");
+        const liveWork = await beginSessionEffect({
+          scope: target.storePath,
+          identities: [sessionKey, sessionId],
+          assertAllowed() {},
+        });
         try {
           await markStartupOrphanedMainSessionsForRecovery({
             stateDir: state.stateDir,
-            activeSessionIds: [sessionId],
           });
           expect(
             await recoverRestartAbortedMainSessions({
               stateDir: state.stateDir,
-              activeSessionIds: [sessionId],
               gatewayRuntime: runtime,
             }),
           ).toEqual({ started: 0, settled: 0, failed: 0, skipped: 1 });
@@ -250,6 +254,7 @@ it.each([
             ),
           );
         } finally {
+          liveWork.release();
           info.mockRestore();
         }
       }

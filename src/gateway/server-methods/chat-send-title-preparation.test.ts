@@ -9,10 +9,10 @@ import {
   replaceSessionEntry,
 } from "../../config/sessions/session-accessor.js";
 import {
-  beginSessionWorkAdmission,
-  getSessionWorkAdmissionRelease,
-  interruptSessionWorkAdmissions,
-} from "../../sessions/session-lifecycle-admission.js";
+  beginSessionEffect,
+  captureSessionControllerSettlement,
+  interruptSessionControllerEffects,
+} from "../../sessions/session-controller.lifecycle.js";
 import { sessionChanges } from "../../sessions/session-row-changes.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { resolveOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.paths.js";
@@ -211,7 +211,7 @@ it("compacts after the reply releases its admission while its title is still gen
         message: { role: "user", content, timestamp: 1 },
       });
     }
-    const admission = await beginSessionWorkAdmission({
+    const admission = await beginSessionEffect({
       scope: scope.storePath,
       identities: [scope.sessionKey, scope.sessionId],
       assertAllowed: () => {},
@@ -320,17 +320,17 @@ it("does not hold session admission while a dashboard title is generating", asyn
       title = sessionTitleRequests.get(scope);
       expect(title).toBeDefined();
       expect(generate).toHaveBeenCalledOnce();
-      expect(getSessionWorkAdmissionRelease(admissionQuery)).toBeUndefined();
-      const titleDrain = interruptSessionWorkAdmissions({ ...admissionQuery, timeoutMs: 0 });
+      expect(captureSessionControllerSettlement(admissionQuery)).toBeUndefined();
+      const titleDrain = interruptSessionControllerEffects({ ...admissionQuery, timeoutMs: 0 });
       await vi.advanceTimersByTimeAsync(0);
       await expect(titleDrain).resolves.toBe(true);
 
-      competing = await beginSessionWorkAdmission({
+      competing = await beginSessionEffect({
         scope: scope.storePath,
         identities: ["agent:main:dashboard:competing-title-lease"],
         assertAllowed: () => {},
       });
-      const competingDrain = interruptSessionWorkAdmissions({
+      const competingDrain = interruptSessionControllerEffects({
         scope: scope.storePath,
         identities: ["agent:main:dashboard:competing-title-lease"],
         timeoutMs: 0,

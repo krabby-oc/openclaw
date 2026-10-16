@@ -106,7 +106,6 @@ async function invoke(
     getRuntimeConfig: () => cfg,
     getSessionEventSubscriberConnIds: () => new Set<string>(),
     broadcastToConnIds: vi.fn(),
-    chatAbortControllers: new Map(),
     logGateway: { warn: vi.fn() },
   } as unknown as GatewayRequestContext;
   const handlerOptions: GatewayRequestHandlerOptions = {

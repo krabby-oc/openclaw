@@ -1,12 +1,26 @@
 /**
  * Tests agent harness runtime helpers and task dispatch behavior.
  */
-import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import { expectDefined } from "@openclaw/normalization-core/expect";
+import { afterEach, assert, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { isEmbeddedAgentRunHandleActive } from "../agents/embedded-agent-runner/runs.js";
 import {
+  createEmbeddedRunHandle,
+  registerTestEmbeddedRun,
+  testing as embeddedRunsTesting,
+} from "../agents/embedded-agent-runner/runs.test-support.js";
+import {
+  reserveSessionControllerSource,
+  retireSessionControllerInput,
+} from "../sessions/session-controller.mailbox.js";
+import {
+  abortAgentHarnessRun,
+  AgentHarnessPreflightError,
   agentHarnessStructuredInput,
   attachModelProviderRequestTransport,
   buildAgentHarnessUserInputAnswers,
   classifyAgentHarnessTerminalOutcome,
+  clearActiveEmbeddedRun,
   deliverAgentHarnessUserInputPrompt,
   formatAgentHarnessUserInputPrompt,
   getModelProviderRequestTransport,
@@ -62,6 +76,15 @@ describe("classifyAgentHarnessTerminalOutcome", () => {
 });
 
 describe("agent harness runtime SDK facade", () => {
+  it("preserves the published failure-retention opt-in on attempt operations", () => {
+    expectTypeOf<
+      NonNullable<AgentHarnessAttemptParams["replyOperation"]>["retainFailureUntilComplete"]
+    >().toEqualTypeOf<() => void>();
+    expectTypeOf<
+      NonNullable<EmbeddedRunAttemptParamsV2["replyOperation"]>["retainFailureUntilComplete"]
+    >().toEqualTypeOf<() => void>();
+  });
+
   it("exposes optional compaction progress without requiring it from legacy engines", () => {
     type CompactParams = Parameters<HarnessContextEngine["compact"]>[0];
     expectTypeOf<CompactParams["onProgress"]>().toEqualTypeOf<(() => void) | undefined>();
@@ -103,6 +126,9 @@ describe("agent harness runtime SDK facade", () => {
     expectTypeOf<
       Omit<EmbeddedRunAttemptParams, "hostCapabilities">
     >().toMatchTypeOf<EmbeddedRunAttemptParams>();
+    expectTypeOf<AgentHarnessAttemptParams["replyOperation"]>().toEqualTypeOf<
+      EmbeddedRunAttemptParams["replyOperation"]
+    >();
     expectTypeOf<
       Omit<AgentHarnessAttemptParamsV2, "hostCapabilities"> extends AgentHarnessAttemptParamsV2
         ? true
@@ -129,7 +155,7 @@ describe("agent harness runtime SDK facade", () => {
       Omit<SessionForkParamsV2, "assertCurrent"> extends SessionForkParamsV2 ? true : false
     >().toEqualTypeOf<false>();
 
-    // v2026.8.1 queue/register callers need neither a source predicate nor V2.
+    // V1 injection remains supported inside a host-admitted harness attempt.
     type QueueOptions = Parameters<typeof queueAgentHarnessMessage>[2];
     const legacyInjection = {
       isAvailable: () => true,
@@ -143,6 +169,15 @@ describe("agent harness runtime SDK facade", () => {
       abort: () => {},
     } satisfies Parameters<typeof setActiveEmbeddedRun>[1];
     expectTypeOf(legacyHandle).toMatchTypeOf<Parameters<typeof setActiveEmbeddedRun>[1]>();
+    expectTypeOf<
+      Extract<keyof Parameters<typeof setActiveEmbeddedRun>[1], symbol>
+    >().toEqualTypeOf<never>();
+    expectTypeOf<Parameters<typeof setActiveEmbeddedRun>["length"]>().toEqualTypeOf<
+      2 | 3 | 4 | 5
+    >();
+    expectTypeOf<ReturnType<typeof setActiveEmbeddedRun>>().toEqualTypeOf<
+      ((reason?: string) => void) | undefined
+    >();
     expectTypeOf(queueAgentHarnessMessage).returns.toEqualTypeOf<boolean>();
     type GuardedInjection = NonNullable<
       Parameters<typeof setActiveEmbeddedRun>[1]["messageInjectionV2"]
@@ -182,6 +217,78 @@ describe("agent harness runtime SDK facade", () => {
     expect(getModelProviderRequestTransport(model)).toEqual({
       auth: { mode: "header", headerName: "x-api-key", value: "secret" },
     });
+  });
+});
+
+describe("agent harness active-run SDK controls", () => {
+  afterEach(() => embeddedRunsTesting.resetActiveEmbeddedRuns());
+
+  it("rejects a session-keyed registration without host admission", () => {
+    const handle = createEmbeddedRunHandle();
+    let failure: unknown;
+    try {
+      setActiveEmbeddedRun("unadmitted", handle, "agent:main:unadmitted");
+    } catch (error) {
+      failure = error;
+    }
+    assert.instanceOf(failure, AgentHarnessPreflightError);
+    expect(failure.code).toBe("SESSION_CONTROLLER_ADMISSION_REQUIRED");
+    expect(failure.scope).toBeUndefined();
+    expect(failure.message).toContain("runAttempt");
+    expect(failure.userMessage).toBe(failure.message);
+  });
+
+  it("steers and interrupts the admitted turn while keeping waiting input", async () => {
+    const queueMessage = vi.fn(async () => {});
+    const operation = registerTestEmbeddedRun(
+      "sdk-turn",
+      createEmbeddedRunHandle({ queueMessage }),
+      "agent:main:sdk-turn",
+    );
+    expect(queueAgentHarnessMessage("sdk-turn", "steer")).toBe(true);
+    await vi.waitFor(() => expect(queueMessage).toHaveBeenCalledOnce());
+    const waiting = reserveSessionControllerSource("agent:main:sdk-turn", {
+      policy: { mode: "followup" },
+    });
+    try {
+      expect(abortAgentHarnessRun("sdk-turn")).toBe(true);
+      expect(operation.result).toMatchObject({ kind: "aborted", code: "aborted_by_user" });
+      expect(waiting.retirementRequested).toBeUndefined();
+    } finally {
+      retireSessionControllerInput(waiting);
+    }
+  });
+
+  it("keeps sessionless native work detached from session steering", () => {
+    const queueMessage = vi.fn(async () => {});
+    const abort = vi.fn();
+    setActiveEmbeddedRun("sdk-detached", createEmbeddedRunHandle({ queueMessage, abort }));
+    expect(queueAgentHarnessMessage("sdk-detached", "steer")).toBe(false);
+    expect(abortAgentHarnessRun("sdk-detached")).toBe(true);
+    expect(queueMessage).not.toHaveBeenCalled();
+    expect(abort).toHaveBeenCalledOnce();
+  });
+
+  it("keeps retained cleanup bound to its exact registration", () => {
+    const handle = createEmbeddedRunHandle();
+    const priorCleanup = setActiveEmbeddedRun("sdk-cleanup", handle);
+    const currentCleanup = expectDefined(
+      setActiveEmbeddedRun("sdk-cleanup", handle),
+      "current registration cleanup",
+    );
+    assert.isFunction(priorCleanup);
+    assert.isFunction(currentCleanup);
+    clearActiveEmbeddedRun(
+      "sdk-cleanup",
+      handle,
+      undefined,
+      undefined,
+      "old_cleanup",
+      priorCleanup,
+    );
+    expect(isEmbeddedAgentRunHandleActive("sdk-cleanup")).toBe(true);
+    currentCleanup("current_cleanup");
+    expect(isEmbeddedAgentRunHandleActive("sdk-cleanup")).toBe(false);
   });
 });
 

@@ -129,3 +129,17 @@ export const toNormalizedUsage = (usage: UsageAccumulator): NormalizedUsage | un
     ...(cost ? { cost: { ...cost } } : {}),
   };
 };
+
+/** Projects all completed generation counts onto the final attempt's metadata. */
+export function withAccumulatedRunUsage(
+  meta: EmbeddedAgentMeta,
+  usage: UsageAccumulator,
+): EmbeddedAgentMeta {
+  return {
+    ...meta,
+    usage: toNormalizedUsage(usage),
+    costUsd: usage.cost && usage.cost !== "unavailable" ? usage.cost.total : undefined,
+    assistantTurns: usage.assistantTurns,
+    ...(usage.bridgeCalls ? { bridgeCalls: usage.bridgeCalls } : {}),
+  };
+}

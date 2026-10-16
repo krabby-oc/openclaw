@@ -113,7 +113,6 @@ it("coalesces machine metadata bursts off thread and selects only correlated pro
     });
     const context = {
       broadcastToConnIds: vi.fn(),
-      chatAbortControllers: new Map(),
       getRuntimeConfig: () => ({}),
       getSessionEventSubscriberConnIds: () => new Set<string>(),
     };
@@ -239,7 +238,6 @@ it("reports committed changes and cold retirement without reporting reads, inclu
     const warn = vi.fn();
     const context = {
       broadcastToConnIds,
-      chatAbortControllers: new Map(),
       getRuntimeConfig: () => ({}),
       getSessionEventSubscriberConnIds: () => new Set(["synthetic-client"]),
     };

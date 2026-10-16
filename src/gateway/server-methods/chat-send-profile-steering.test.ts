@@ -15,16 +15,17 @@ import {
 } from "../../agents/harness/gateway-question-dispatch.js";
 import { createNativeSessionBindingAuthority } from "../../agents/harness/native-session/binding-authority.js";
 import { registerAgentSessionLoopTestLifecycle } from "../../agents/sessions/agent-session-loop-correctness.test-support.js";
-import {
-  beginReplyMessageInjectionTarget,
-  replyRunRegistry,
-} from "../../auto-reply/reply/reply-run-registry.js";
 import { beginRestartRecoveryTerminalDelivery } from "../../config/sessions/restart-recovery-receipt.js";
 import {
   listSessionPendingInputs,
   loadTranscriptEventsSync,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
+import {
+  beginReplyMessageInjectionTarget,
+  bindSessionControllerSourceTurnId,
+  captureReplyMessageInjectionTarget,
+} from "../../sessions/session-controller.js";
 import { linkEmail } from "../../state/user-profile-writes.worker.js";
 import { ensureProfileForEmail } from "../../state/user-profiles.js";
 import { createExpectedProfileBinding } from "../expected-profile.js";
@@ -73,7 +74,7 @@ describe("native profile-bound steering", () => {
         },
       });
       operation.bindToolAuthorityRoute({ provider: "test-provider", model: "test-model" });
-      replyRunRegistry.bindSourceTurnId(operation, sourceTurnId);
+      bindSessionControllerSourceTurnId(operation, sourceTurnId);
       operation.setPhase("running");
       const native = createNativeSessionBindingAuthority(
         [
@@ -402,9 +403,7 @@ describe("native profile-bound steering", () => {
               dispatch(assertCurrent, kind),
           },
         });
-        const target = replyRunRegistry.resolveCurrentMessageInjectionTarget(
-          fixture.scope.sessionKey,
-        )!;
+        const target = captureReplyMessageInjectionTarget(operation)!;
         const attempt = await beginReplyMessageInjectionTarget(target, "answer", {
           isInboundUserMessage: true,
           toolAuthorityFingerprint: sink === "claim" ? "other-tools" : "active-tools",

@@ -7,7 +7,6 @@ import {
   withinTest,
 } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
-import { resolveActiveEmbeddedRunOwner } from "../agents/embedded-agent-runner/runs.js";
 import {
   clearRuntimeConfigSnapshot,
   getRuntimeConfigSnapshot,
@@ -20,6 +19,7 @@ import {
   invokeChatAbortHandler,
 } from "../gateway/server-methods/chat.abort.test-helpers.js";
 import { coreGatewayHandlers } from "../gateway/server-methods/core-handlers.js";
+import { claimRpcSourceForTest } from "../gateway/test-helpers.rpc-source.js";
 import { hashWorkerCredential } from "../gateway/worker-environments/credential.js";
 import { projectWorkerSessionTurnClaim } from "../gateway/worker-environments/placement-record.js";
 import { createWorkerTurnRunOwner } from "../gateway/worker-environments/worker-turn-run-owner.js";
@@ -33,6 +33,7 @@ import {
   getActiveAgentRunDelegatedAuthority,
   getAgentRunContext,
 } from "../infra/agent-run-registry.js";
+import { captureSessionTarget } from "../sessions/session-controller.lifecycle.js";
 import {
   ComposedGatewayHarness,
   ENVIRONMENT_ID,
@@ -120,7 +121,12 @@ describe("worker chat.abort settlement", () => {
         throw new Error("managed worker turn has no admitted authority");
       }
       const registration = registerChatAbortController({
-        chatAbortControllers: context.chatAbortControllers,
+        target: captureSessionTarget({
+          storeScope: harness.sessionTarget.storePath,
+          sessionKey: SESSION_KEY,
+          incarnation: SESSION_ID,
+          agentId: "main",
+        }),
         runId: RUN_ID,
         sessionId: SESSION_ID,
         sessionKey: SESSION_KEY,
@@ -132,8 +138,16 @@ describe("worker chat.abort settlement", () => {
         timeoutMs: 60_000,
         kind: "chat-send",
       });
+      if (!registration.registered) {
+        throw new Error("expected managed worker RPC source");
+      }
       registration.bindAgentRunDelegatedAuthority(authority);
-      registration.markExecutionStarted();
+      const releaseSource = await claimRpcSourceForTest(registration.entry);
+      const operation = registration.entry.input.claim?.operation;
+      if (!operation) {
+        throw new Error("expected admitted worker operation");
+      }
+      expect(registration.markExecutionStarted()).toBe(true);
       const ownerInput = {
         placements: harness.placementStore,
         isReplyDelivered: () => false,
@@ -152,10 +166,10 @@ describe("worker chat.abort settlement", () => {
           config: harness.cfg,
           lifecycleGeneration,
           abortSignal: registration.controller.signal,
+          replyOperation: operation,
         },
       };
       const owner = await createWorkerTurnRunOwner(ownerInput);
-      let replacement: Awaited<ReturnType<typeof createWorkerTurnRunOwner>> | undefined;
       const ackEntered = createDeferred();
       const ackRelease = createDeferred();
       const providerRelease = createDeferred<WorkerInferenceTerminalOutcome>();
@@ -325,13 +339,16 @@ describe("worker chat.abort settlement", () => {
             ),
             signal,
           );
-          replacement = await createWorkerTurnRunOwner({
-            ...ownerInput,
-            turn: { ...ownerInput.turn, abortSignal: undefined },
-          });
-          // Reusing and cancelling the same claim cannot lend the first request
-          // a new owner's authority after its ACK await.
-          expect(resolveActiveEmbeddedRunOwner(SESSION_ID)?.abort()).toBe(true);
+          // The cancelled operation owns this turn's liveness, so reusing its claim
+          // cannot install an owner that lends the first request authority after its ACK await.
+          await expect(
+            createWorkerTurnRunOwner({
+              ...ownerInput,
+              turn: { ...ownerInput.turn, abortSignal: undefined },
+            }),
+          ).rejects.toThrow("Worker attempt retired");
+          // Retiring the captured owner is the remaining authority change in this window.
+          owner.dispose();
           ackRelease.resolve();
         }
         phase = "waiting-command-settlement";
@@ -418,8 +435,9 @@ describe("worker chat.abort settlement", () => {
             owner.signal.removeEventListener("abort", cancelWorker);
           }
           owner.dispose();
-          replacement?.dispose();
           registration.cleanup();
+          releaseSource();
+          await registration.entry.input.settlement.promise;
           unsubscribe();
         }
       }

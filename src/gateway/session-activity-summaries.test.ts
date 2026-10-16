@@ -28,7 +28,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { registerAgentRunContext, clearAgentRunContext } from "../infra/agent-run-registry.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
-import { runExclusiveSessionLifecycleMutation } from "../sessions/session-lifecycle-admission.js";
+import { runSessionMutation } from "../sessions/session-controller.lifecycle.js";
 import type { DB } from "../state/openclaw-agent-db.generated.js";
 import {
   openOpenClawAgentDatabase,
@@ -647,7 +647,8 @@ describe("Activity recap lifecycle with the canonical session store", () => {
         agentId: target.agentId,
       });
       const capturedEntry = read();
-      const deletion = runExclusiveSessionLifecycleMutation("delete", {
+      const deletion = runSessionMutation({
+        kind: "delete",
         scope: storePath,
         identities: [target.key, scope.sessionId],
         run: () =>

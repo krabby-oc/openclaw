@@ -9,7 +9,8 @@ import { replaceSessionEntrySync } from "../../config/sessions/session-accessor.
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { clearAgentRunContext } from "../../infra/agent-run-registry.js";
 import { loadOrCreateProcessDeviceIdentityAsync } from "../../infra/device-identity-async.js";
-import * as sessionLifecycle from "../../sessions/session-lifecycle-admission.js";
+import * as sessionLifecycle from "../../sessions/session-controller.lifecycle.js";
+import { rpcSourceTesting } from "../../sessions/session-lifecycle-admission.test-support.js";
 import { requireOpenClawStateDatabaseIdentity } from "../../state/openclaw-state-db-cache.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
@@ -59,7 +60,7 @@ it.each(["restart", "stop"] as const)(
       };
       const entered = createDeferred();
       const release = createDeferred();
-      const blocker = sessionLifecycle.runExclusiveSessionLifecycleMutation("patch", {
+      const blocker = sessionLifecycle.runSessionMutation({
         ...target,
         prepare: async () => {
           entered.resolve();
@@ -69,8 +70,8 @@ it.each(["restart", "stop"] as const)(
       });
       await entered.promise;
       const queued = createDeferred();
-      const begin = sessionLifecycle.beginSessionWorkAdmission;
-      using observation = vi.spyOn(sessionLifecycle, "beginSessionWorkAdmission");
+      const begin = sessionLifecycle.beginSessionEffect;
+      using observation = vi.spyOn(sessionLifecycle, "beginSessionEffect");
       observation.mockImplementationOnce((params) => {
         const admission = begin(params);
         queued.resolve();
@@ -82,7 +83,7 @@ it.each(["restart", "stop"] as const)(
       let retried: Awaited<ReturnType<typeof admitChatSend>> | undefined;
       try {
         await awaitGateBeforeSettlement(queued.promise, pending, "chat skipped pending admission");
-        await sessionLifecycle.startSessionWorkAdmissionInterruption({
+        await sessionLifecycle.startSessionControllerInterruption({
           ...target,
           reason:
             reason === "restart"
@@ -90,7 +91,7 @@ it.each(["restart", "stop"] as const)(
               : createAgentRunDirectAbortError(),
         }).released;
         expect(await pending).toMatchObject({ ok: false });
-        expect(context.chatAbortControllers.has(runId)).toBe(false);
+        expect(rpcSourceTesting.has(runId)).toBe(false);
         expect(context.dedupe.has(session.pendingChatSendKey)).toBe(false);
         if (reason === "restart") {
           expect(respond).toHaveBeenCalledWith(
@@ -259,7 +260,7 @@ it.each([
         respond,
       });
       expect(admitted.ok, JSON.stringify(respond.mock.calls)).toBe(testCase.allowed);
-      expect(context.chatAbortControllers.has(runId)).toBe(testCase.allowed);
+      expect(rpcSourceTesting.has(runId)).toBe(testCase.allowed);
       if (!testCase.allowed) {
         expect(respond.mock.calls[0]?.[2]?.message).toContain("placement authority changed");
       }

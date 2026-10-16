@@ -25,6 +25,7 @@ import {
 import { claimAgentRunContext, releaseAgentRunContext } from "../../infra/agent-run-registry.js";
 import * as gatewayWorkAdmission from "../../process/gateway-work-admission.js";
 import { resetGatewayWorkAdmission } from "../../process/gateway-work-admission.js";
+import { beginSessionEffect } from "../../sessions/session-controller.lifecycle.js";
 import { sessionChanges } from "../../sessions/session-row-changes.js";
 import {
   createAgentDatabaseInspectionRefusal,
@@ -616,12 +617,27 @@ describe("main-session startup recovery", () => {
     };
     const archivedHistory = await loadTranscriptEvents(archivedScope);
 
-    const marked = await markStartupOrphanedMainSessionsForRecovery({
-      stateDir: tmpDir,
-      activeSessionKeys: ["agent:main:active-key"],
-      activeSessionIds: ["active-key-session", "active-id-session"],
-      updatedBeforeMs: cutoff,
-    });
+    const liveWork = await Promise.all([
+      beginSessionEffect({
+        scope: storePath,
+        identities: ["agent:main:active-key", "active-key-session"],
+        assertAllowed() {},
+      }),
+      beginSessionEffect({
+        scope: storePath,
+        identities: ["agent:main:active-id", "active-id-session"],
+        assertAllowed() {},
+      }),
+    ]);
+    let marked: Awaited<ReturnType<typeof markStartupOrphanedMainSessionsForRecovery>>;
+    try {
+      marked = await markStartupOrphanedMainSessionsForRecovery({
+        stateDir: tmpDir,
+        updatedBeforeMs: cutoff,
+      });
+    } finally {
+      liveWork.forEach((work) => work.release());
+    }
 
     expect(marked).toEqual({ marked: 1, skipped: 1 });
     let store = readStore(path.join(sessionsDir, "sessions.json"));

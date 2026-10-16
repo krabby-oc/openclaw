@@ -1,4 +1,5 @@
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
+import { isSilentReplyText } from "../../../auto-reply/tokens.js";
 import { resolveSessionStorePathCore } from "../../../config/sessions/paths.js";
 import type { SessionTranscriptRuntimeTarget } from "../../../config/sessions/session-accessor.js";
 import { withSessionEntryReadOnlyInWorker } from "../../../config/sessions/session-entry-read-runtime.js";
@@ -34,13 +35,7 @@ import { hasSubagentRunEnded } from "./subagent-run-liveness.js";
 const DELIVERY_MIRROR_HISTORY_MAX_CHARS = 128 * 1024;
 
 export const formatAnnounceDeliveryError = (delivery: SubagentAnnounceDeliveryResult): string => {
-  const errors = [
-    delivery.error,
-    delivery.reason,
-    ...(delivery.phases ?? []).map((phase) =>
-      phase.error ? `${phase.phase}: ${phase.error}` : undefined,
-    ),
-  ]
+  const errors = [delivery.error, delivery.reason]
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value));
   return errors.length > 0
@@ -60,11 +55,6 @@ export const recordAnnounceDeliveryResult = (
   if (!delivery.delivered && delivery.disposition !== "intentional_non_delivery") {
     if (delivery.reason === "message_tool_delivery_missing") {
       deliveryState.lastDropReason = "message_tool_delivery_missing";
-    } else if (
-      delivery.reason === "steer_dropped" ||
-      delivery.phases?.some((phase) => phase.reason === "steer_dropped")
-    ) {
-      deliveryState.lastDropReason = "steer_dropped";
     } else if (delivery.path === "none") {
       deliveryState.lastDropReason = "sink_unavailable";
     }
@@ -334,7 +324,7 @@ export const refreshFrozenResultFromSession = async (
     return false;
   }
   const trimmed = captured?.trim();
-  if (!trimmed) {
+  if (!trimmed || isSilentReplyText(trimmed)) {
     return false;
   }
   // Reply capture yields while registration can transfer session ownership.

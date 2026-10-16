@@ -35,7 +35,7 @@ import {
 } from "../../infra/diagnostic-trace-context.js";
 import * as workerAdmission from "../../infra/sqlite-worker-operation-admission.js";
 import { sqliteWorkerOwnerProbe as probe } from "../../infra/sqlite-worker-owner-probe.test-support.js";
-import * as sessionLifecycle from "../../sessions/session-lifecycle-admission.js";
+import * as sessionLifecycle from "../../sessions/session-controller.lifecycle.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { ensureCanonicalUserProfileForEmail } from "../../state/user-profile-writes.js";
@@ -66,8 +66,6 @@ function patchContext(
     },
     getSessionEventSubscriberConnIds: () => new Set(),
     broadcastToConnIds: vi.fn(),
-    chatAbortControllers: new Map(),
-    chatQueuedTurns: new Map(),
     dedupe: new Map(),
   } as unknown as GatewayRequestContext;
 }
@@ -682,11 +680,11 @@ test("patch timing covers preparation and lifecycle finalization before cleanup"
     let clock = performance.now();
     const clockSpy = vi.spyOn(performance, "now").mockImplementation(() => clock);
     const log = vi.spyOn(sessionLog, "info").mockImplementation(() => {});
-    const runMutation = sessionLifecycle.runExclusiveSessionLifecycleMutation;
+    const runMutation = sessionLifecycle.runSessionMutation;
     const lifecycle = vi
-      .spyOn(sessionLifecycle, "runExclusiveSessionLifecycleMutation")
-      .mockImplementation((operation, params) =>
-        runMutation(operation, {
+      .spyOn(sessionLifecycle, "runSessionMutation")
+      .mockImplementation((params) =>
+        runMutation({
           ...params,
           prepare: async (owner) => {
             await params.prepare?.(owner);

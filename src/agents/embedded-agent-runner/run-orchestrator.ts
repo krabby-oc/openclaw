@@ -74,7 +74,7 @@ import { SessionManager } from "../sessions/session-manager.js";
 import { redactRunIdentifier } from "../workspace-run.js";
 import { runEmbeddedAgentViaCliBackendIfEligible } from "./cli-backend-dispatch.js";
 import { waitForDeferredTurnMaintenanceForSession } from "./context-engine-maintenance.js";
-import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
+import { resolveGlobalLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { createEmbeddedAgentPluginRuntimeRefresh } from "./plugin-runtime-refresh.js";
 import { runPreparedEmbeddedLoop } from "./run-loop.js";
@@ -105,7 +105,7 @@ import {
   createUsageAccumulator,
   mergeAttemptRunStatsIntoAccumulator,
   mergeUsageIntoAccumulator,
-  toNormalizedUsage,
+  withAccumulatedRunUsage,
 } from "./usage-accumulator.js";
 
 const EMPTY_EMBEDDED_AGENT_CONFIG: OpenClawConfig = Object.freeze({});
@@ -163,7 +163,6 @@ async function runEmbeddedAgentForSession(
         ? SessionManager.inMemory(paramsBase.cwd ?? paramsBase.workspaceDir)
         : undefined),
   });
-  const sessionLane = resolveSessionLane(params.sessionKey?.trim() || params.sessionId);
   const globalLane = resolveGlobalLane(params.lane, params);
   // Outer fallback attempts defer session suspension only while another
   // candidate remains. Direct and final-candidate runs suspend normally.
@@ -190,7 +189,6 @@ async function runEmbeddedAgentForSession(
     getParams: () => params,
     globalLane,
     initialQueuedLifecycleGeneration: queuedLifecycleGeneration,
-    sessionLane,
     setLifecycleGeneration: (generation) => {
       lifecycleGeneration = generation;
     },
@@ -327,6 +325,9 @@ async function runEmbeddedAgentForSession(
         };
         startupStages.mark("harness-selection");
         const callerResult = createDeferredCore<EmbeddedAgentRunResult>();
+        const generationCleanupSettlement = createDeferredCore();
+        // Cleanup can outlive every attachment consumer; observe its late failure here.
+        void generationCleanupSettlement.promise.catch(() => {});
         const trackOwner = captureAsyncWorkTracker();
         const parentSignal = getAsyncWorkSignal();
         const work = new AsyncWorkScope();
@@ -540,6 +541,7 @@ async function runEmbeddedAgentForSession(
                 },
                 runParams: {
                   ...params,
+                  runCleanupSettlement: generationCleanupSettlement.promise,
                   assistantErrorTranscript,
                   deferTerminalLifecycle: true,
                   onAttemptStart: () => {
@@ -636,6 +638,10 @@ async function runEmbeddedAgentForSession(
             }
           }
         });
+        void generationCleanup.then(
+          generationCleanupSettlement.resolve,
+          generationCleanupSettlement.reject,
+        );
         void generationCleanup.catch(callerResult.reject);
         return await callerResult.promise;
       };
@@ -662,14 +668,7 @@ async function runEmbeddedAgentForSession(
                   meta: {
                     ...result.meta,
                     durationMs: Date.now() - started,
-                    agentMeta: {
-                      ...result.meta.agentMeta,
-                      usage: toNormalizedUsage(usage),
-                      costUsd:
-                        usage.cost && usage.cost !== "unavailable" ? usage.cost.total : undefined,
-                      assistantTurns: usage.assistantTurns,
-                      ...(usage.bridgeCalls ? { bridgeCalls: usage.bridgeCalls } : {}),
-                    },
+                    agentMeta: withAccumulatedRunUsage(result.meta.agentMeta, usage),
                   },
                 };
               }

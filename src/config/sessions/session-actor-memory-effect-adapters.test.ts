@@ -4,7 +4,7 @@ import { prepareReplyToolAuthority } from "../../auto-reply/reply/reply-tool-aut
 import { prepareSessionResetCleanupGuard } from "../../auto-reply/reply/session-reset-cleanup.js";
 import { prepareSteeringDelivery } from "../../auto-reply/reply/steering-delivery-preparation.js";
 import { createCompletionGrantLineageAdmission } from "../../gateway/tool-resolution-completion.js";
-import { runExclusiveSessionLifecycleMutation } from "../../sessions/session-lifecycle-admission.js";
+import { runSessionMutation } from "../../sessions/session-controller.lifecycle.js";
 import { resolveIncognitoOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.paths.js";
 import { upsertSessionEntryCore } from "./session-accessor.js";
 import { applySessionEntryOperation } from "./session-accessor.sqlite-entry.js";
@@ -177,7 +177,7 @@ describe("memory actor effect adapters", () => {
           permissionMode: "guarded",
           toolOverrides: { webSearch: false },
         });
-        await runExclusiveSessionLifecycleMutation("reset", {
+        await runSessionMutation({
           scope: source.storePath,
           identities: [source.sessionKey, source.sessionId],
           async run() {
@@ -198,52 +198,68 @@ describe("memory actor effect adapters", () => {
     }
   });
 
-  it("rejects an unbound reply caller when sandbox policy changes before the tool effect", async () => {
-    const stateDir = "/synthetic/reply-tool-effect";
-    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
-    const target = {
-      agentId: scope.agentId,
-      path: resolveIncognitoOpenClawAgentSqlitePath({ agentId: scope.agentId }),
-    };
-    const source = { ...scope, storePath: target.path };
-    const entry: SessionEntry = {
-      sessionId: scope.sessionId,
-      updatedAt: 1,
-      incognito: true,
-      sandboxMode: "off",
-    };
-    try {
-      await upsertSessionEntryCore(source, entry);
-      const route = { provider: "openai", model: "test-model" };
-      const reply = prepareReplyToolAuthority({
-        run: {
-          ...route,
-          ...source,
-          sessionFile: "/synthetic/session",
-          workspaceDir: "/synthetic/workspace",
-          senderIsOwner: true,
-          config: { agents: { defaults: { sandbox: { mode: "all" } } } },
-        },
-      });
-      const fingerprint = await reply.fingerprintAsync(route);
-      const prepared = await prepareReplyToolAuthorityCallerRead(
-        reply.projectAsync,
-        undefined,
-        fingerprint,
-        route,
-        () => {},
-      );
-      expect(prepared).toBeDefined();
-      prepared!.assertPrepared([]);
-      await upsertSessionEntryCore(source, { ...entry, sandboxMode: undefined });
-      expect(() => prepared!.assertPrepared([])).toThrow("policy does not match");
-      memorySessionActorOwners.closeDatabase(target);
-      expect(() => prepared!.assertPrepared([])).toThrow("closed");
-    } finally {
-      memorySessionActorOwners.closeDatabase(target);
-      vi.unstubAllEnvs();
-    }
-  });
+  it.each(["incognito-key", "configured-store"] as const)(
+    "rejects an unbound reply caller from %s when sandbox policy changes before the tool effect",
+    async (storage) => {
+      const stateDir = "/synthetic/reply-tool-effect";
+      vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+      const target = {
+        agentId: scope.agentId,
+        path: resolveIncognitoOpenClawAgentSqlitePath({
+          agentId: scope.agentId,
+          env:
+            storage === "configured-store"
+              ? { OPENCLAW_STATE_DIR: `${stateDir}-configured` }
+              : undefined,
+        }),
+      };
+      const source = {
+        ...scope,
+        sessionKey: storage === "configured-store" ? "agent:main:main" : scope.sessionKey,
+        storePath: target.path,
+      };
+      const entry: SessionEntry = {
+        sessionId: scope.sessionId,
+        updatedAt: 1,
+        incognito: true,
+        sandboxMode: "off",
+      };
+      try {
+        await upsertSessionEntryCore(source, entry);
+        const route = { provider: "openai", model: "test-model" };
+        const reply = prepareReplyToolAuthority({
+          run: {
+            ...route,
+            ...source,
+            sessionFile: "/synthetic/session",
+            workspaceDir: "/synthetic/workspace",
+            senderIsOwner: true,
+            config: {
+              ...(storage === "configured-store" ? { session: { store: target.path } } : {}),
+              agents: { defaults: { sandbox: { mode: "all" } } },
+            },
+          },
+        });
+        const fingerprint = await reply.fingerprintAsync(route);
+        const prepared = await prepareReplyToolAuthorityCallerRead(
+          reply.projectAsync,
+          undefined,
+          fingerprint,
+          route,
+          () => {},
+        );
+        expect(prepared).toBeDefined();
+        prepared!.assertPrepared([]);
+        await upsertSessionEntryCore(source, { ...entry, sandboxMode: undefined });
+        expect(() => prepared!.assertPrepared([])).toThrow("policy does not match");
+        memorySessionActorOwners.closeDatabase(target);
+        expect(() => prepared!.assertPrepared([])).toThrow("closed");
+      } finally {
+        memorySessionActorOwners.closeDatabase(target);
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("keeps unbound reset cleanup on the accepted session after a replacement", async () => {
     const env = { OPENCLAW_STATE_DIR: "/synthetic/reset-cleanup-effect" };
