@@ -475,18 +475,17 @@ export class SessionOrganizer {
     const operations = await this.loadOperations(scope);
     if (!operations) {
       return this.deps.sessionData.isSessionMutationScopeCurrent(scope)
-        ? this.sessionGroupFailure()
+        ? (this.deps.sessionData.sessionMutationError ?? t("sessionsView.newGroupFailed"))
         : t("sessionsView.newGroupStale");
     }
     const result = await operations.createSessionGroup(this.deps, name, sessions, scope);
+    if (result === "completed" && sessions.length === 0) {
+      this.notify();
+    }
     if (result === "failed") {
-      return this.sessionGroupFailure();
+      return this.deps.sessionData.sessionMutationError ?? t("sessionsView.newGroupFailed");
     }
     return result === "stale" ? t("sessionsView.newGroupStale") : null;
-  }
-
-  private sessionGroupFailure(): string {
-    return this.deps.sessionData.sessionMutationError ?? t("sessionsView.newGroupFailed");
   }
 
   async renameSessionGroupFromMenu(group: string): Promise<void> {
@@ -599,9 +598,7 @@ export class SessionOrganizer {
 
   toggleSection(sectionId: string) {
     const collapsed = new Set(this.collapsedSessionSections);
-    if (collapsed.has(sectionId)) {
-      collapsed.delete(sectionId);
-    } else {
+    if (!collapsed.delete(sectionId)) {
       collapsed.add(sectionId);
     }
     this.saveCollapsedSessionSections(collapsed);
@@ -619,6 +616,7 @@ export class SessionOrganizer {
         targetSectionId,
         position,
         scope,
+        this.notify,
       ),
     );
   }

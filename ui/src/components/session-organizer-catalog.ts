@@ -135,6 +135,7 @@ export async function reorderSidebarSection(
   targetSectionId: string,
   position: "before" | "after",
   scope: SidebarSessionMutationScope,
+  notify: () => void,
 ): Promise<void> {
   if (!deps.sessionData.isSessionMutationScopeCurrent(scope)) {
     return;
@@ -164,6 +165,10 @@ export async function reorderSidebarSection(
     // No capability gate: the gateway serves this UI from its own dist, so a
     // newer UI never talks to an older gateway's closed put schema outside dev.
     await scope.sessions.groupsPut(nextGroups, next);
+    if (deps.sessionData.isSessionMutationScopeCurrent(scope)) {
+      // Publish the row move before completion restores its keyboard focus.
+      notify();
+    }
   } catch (error) {
     deps.sessionData.publishSessionMutationError(scope, error);
   }

@@ -16,10 +16,9 @@ import type {
 } from "./app-sidebar-session-types.ts";
 import type { SessionDataController } from "./session-data-controller.ts";
 import type { SessionOrganizer, SessionOrganizerDependencies } from "./session-organizer.ts";
-import type { SidebarMenusController } from "./sidebar-menus-controller.tsx";
 
 export interface SidebarMenusControllerHost extends SessionOrganizerDependencies {
-  addController(controller: SidebarMenusController): void;
+  addController(controller: { hostConnected(): void; hostDisconnected(): void }): void;
   requestUpdate(): void;
   readonly updateComplete: Promise<boolean>;
   readonly nativeGatewaySnapshot: NativeGatewaysSnapshot | null;
