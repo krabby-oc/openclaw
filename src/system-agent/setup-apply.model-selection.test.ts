@@ -92,7 +92,15 @@ describe("projectSetupInferenceConfig", () => {
       };
 
       const projected = projectSetupInferenceConfig({
-        base: {},
+        base: {
+          models: {
+            providers: {
+              [provider.toUpperCase()]: { apiKey: "old-alias-key", models: [] },
+              [provider]: { apiKey: "old-canonical-key", models: [] },
+              sibling: { baseUrl: "http://127.0.0.1:9000/v1", models: [] },
+            },
+          },
+        },
         prepared,
         modelRef: `${provider}/local-model`,
         agentId: "main",
@@ -100,7 +108,10 @@ describe("projectSetupInferenceConfig", () => {
         credential,
       });
 
-      expect(projected.models?.providers?.[provider]?.apiKey).toEqual(expectedApiKey);
+      expect(projected.models?.providers).toEqual({
+        sibling: { baseUrl: "http://127.0.0.1:9000/v1", models: [] },
+        [provider]: { ...prepared.models?.providers?.[provider], apiKey: expectedApiKey },
+      });
     },
   );
 });

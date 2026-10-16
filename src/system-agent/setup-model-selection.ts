@@ -1,5 +1,8 @@
 import { parseProviderModelRef } from "@openclaw/model-catalog-core/model-catalog-refs";
-import { findNormalizedProviderKey } from "@openclaw/model-catalog-core/provider-id";
+import {
+  findNormalizedProviderKey,
+  normalizeProviderId,
+} from "@openclaw/model-catalog-core/provider-id";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { toAgentEntriesRecord } from "../agents/agent-scope-config.js";
 import type { AuthProfileCredential } from "../agents/auth-profiles/types.js";
@@ -288,7 +291,14 @@ export function projectSetupInferenceConfig(params: {
     }
     config.models = {
       ...config.models,
-      providers: { ...config.models?.providers, [providerKey]: selectedProvider },
+      providers: {
+        ...Object.fromEntries(
+          Object.entries(config.models?.providers ?? {}).filter(
+            ([key]) => normalizeProviderId(key) !== normalizeProviderId(providerKey),
+          ),
+        ),
+        [providerKey]: selectedProvider,
+      },
     };
   }
   for (const pluginId of new Set([params.pluginId, params.agentRuntimeId])) {
