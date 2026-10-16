@@ -2354,7 +2354,8 @@ Shared-state database drainage also joins resources registered while an earlier
 resource is closing. Native retirement waits for those resources; failed cleanup
 remains owned for a later explicit retry.
 Maintenance cleanup joins work started by earlier cleanup phases before closing
-the resources it uses. Clients adopted by actor retirement share its cleanup result.
+the resources it uses. The broker joins every client's accepted commands and native
+close; shared-state owners await that result without a second adoption protocol.
 
 Memory managers admit writes on their exact borrowed agent connection. Provider
 calls and source preparation run before admission; generated-cache and source
