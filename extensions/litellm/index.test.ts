@@ -226,9 +226,14 @@ describe("litellm plugin", () => {
     expect(result?.configPatch?.models?.providers?.litellm?.baseUrl).toBe("http://localhost:4000");
   });
 
-  it.each([false, true])(
-    "preserves authored settings with a canonical row present: %s",
-    async (withCanonical) => {
+  it.each([
+    { withCanonical: false, authMode: "interactive" },
+    { withCanonical: true, authMode: "interactive" },
+    { withCanonical: false, authMode: "non-interactive" },
+    { withCanonical: true, authMode: "non-interactive" },
+  ] as const)(
+    "preserves authored settings through $authMode auth with a canonical row present: $withCanonical",
+    async ({ withCanonical, authMode }) => {
       const authored: ModelDefinitionConfig[] = [
         {
           id: "custom-model",
@@ -258,26 +263,43 @@ describe("litellm plugin", () => {
       const initialValue = selected.baseUrl;
       const expectedProvider = {
         ...structuredClone(selected),
-        baseUrl: "https://selected.example/v1",
+        baseUrl: authMode === "interactive" ? "https://selected.example/v1" : selected.baseUrl,
         api: "openai-completions",
       };
       const prompter = createTestWizardPrompter({
         text: vi.fn(async () => "https://selected.example/v1") as WizardPrompter["text"],
       });
-      const result = await runInteractiveAuth({
-        config: {
-          models: {
-            providers: {
-              LiteLLM: alias,
-              ...(withCanonical ? { litellm: canonical } : {}),
-            },
+      const config: OpenClawConfig = {
+        models: {
+          providers: {
+            LiteLLM: alias,
+            ...(withCanonical ? { litellm: canonical } : {}),
           },
         },
-        prompter,
-      });
+      };
+      let providers: Record<string, ModelProviderConfig> | undefined;
+      if (authMode === "interactive") {
+        const result = await runInteractiveAuth({ config, prompter });
+        expect(prompter.text).toHaveBeenCalledWith(expect.objectContaining({ initialValue }));
+        providers = applyProviderAuthConfigPatch(config, result?.configPatch, result).models
+          ?.providers;
+      } else {
+        const result = await registerProvider()?.auth?.[0]?.runNonInteractive?.({
+          authChoice: "litellm-api-key",
+          config,
+          baseConfig: config,
+          opts: {},
+          runtime: createRuntimeSpies(),
+          resolveApiKey: async () => ({
+            key: withCanonical ? "canonical-key" : "old-key",
+            source: "profile",
+          }),
+          toApiKeyCredential: () => null,
+        });
+        providers = result?.models?.providers;
+      }
 
-      expect(prompter.text).toHaveBeenCalledWith(expect.objectContaining({ initialValue }));
-      expect(result?.configPatch?.models?.providers).toStrictEqual({
+      expect(providers).toStrictEqual({
         litellm: expectedProvider,
       });
     },
