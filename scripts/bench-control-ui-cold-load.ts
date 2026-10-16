@@ -42,6 +42,10 @@ function readRigProbeSnapshot() {
     loaf: [...(perf?.loaf ?? [])],
     paints: [...(perf?.paints ?? [])],
     rpc: [...(Reflect.get(window, "__wsLog") ?? [])],
+    avatarRequests: performance
+      .getEntriesByType("resource")
+      .filter((entry) => /\/api\/users\/[^/]+\/avatar/u.test(new URL(entry.name).pathname))
+      .map((entry) => ({ url: entry.name, start: entry.startTime, duration: entry.duration })),
   };
 }
 
@@ -934,7 +938,17 @@ try {
       }
     }
     const overlays = values["overlay-probe"]
-      ? await probeColdLoadOverlays(page, artifactDir, run)
+      ? await probeColdLoadOverlays(
+          page,
+          artifactDir,
+          run,
+          values["closed-menu-members"]
+            ? [
+                ["sharing", ".chat-pane__sharing-trigger", ".chat-pane__sharing-member"],
+                ["layout", ".chat-pane__layout-trigger", ".chat-pane__layout-menu .oc-menu-item"],
+              ]
+            : undefined,
+        )
       : undefined;
     await cdp.detach();
     const result = {
