@@ -57,30 +57,8 @@ export function snapshotSections(
     }
     return [
       {
-        id: section.id,
-        category: section.category,
-        personOwner: section.personOwner
-          ? {
-              type: section.personOwner.type,
-              id: section.personOwner.id,
-              label: section.personOwner.label,
-              identity:
-                section.personOwner.identity?.type === "profile"
-                  ? { type: "profile" as const, id: section.personOwner.identity.id }
-                  : undefined,
-            }
-          : undefined,
-        project: section.project
-          ? { name: section.project.name, path: section.project.path }
-          : undefined,
-        groups: section.groups,
-        work: section.work,
+        ...section,
         rows,
-        totalRowCount: section.totalRowCount,
-        visibleRowCount: section.visibleRowCount,
-        visibleLimit: section.visibleLimit,
-        collapsedVisibleRowCount: section.collapsedVisibleRowCount,
-        renderHeader: section.renderHeader,
         ...(rows.length !== section.rows.length
           ? {
               totalRowCount: rows.length,
