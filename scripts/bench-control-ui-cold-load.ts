@@ -209,6 +209,7 @@ const { values } = parseArgs({
     "init-script": { type: "string", multiple: true, default: [] },
     "sidebar-list-churn": { type: "boolean", default: false },
     "sidebar-live-churn": { type: "boolean", default: false },
+    "session-event-churn": { type: "boolean", default: false },
     "duplicate-boot-reads": { type: "boolean", default: false },
     "capture-ms": { type: "string", default: "0" },
     "sidebar-row-transfer": { type: "string", default: "full" },
@@ -292,6 +293,7 @@ const fixture = createControlUiTeamScaleFixture({
   liveRun: values["live-events"] || values["streaming-reply"],
   sidebarListChurn: values["sidebar-list-churn"],
   sidebarLiveChurn: values["sidebar-live-churn"],
+  sessionEventChurn: values["session-event-churn"],
   duplicateBootReads: values["duplicate-boot-reads"],
 });
 const streamingReply = values["streaming-reply"] ? createControlUiStreamingReply() : undefined;
@@ -808,8 +810,10 @@ try {
       const liveTrace: unknown[] = [];
       collectedTrace = liveTrace;
       if (!values.untraced) {
+        await cdp.send("Profiler.start");
         await cdp.send("Tracing.start", {
-          categories: "toplevel,blink.user_timing,devtools.timeline",
+          categories:
+            "toplevel,blink.user_timing,devtools.timeline,disabled-by-default-v8.cpu_profiler",
           transferMode: "ReportEvents",
         });
       }
@@ -855,6 +859,11 @@ try {
       }
       await page.evaluate(() => Reflect.get(window, "__coldLoad").finishLive());
       if (!values.untraced) {
+        const liveProfile = await cdp.send("Profiler.stop");
+        await writeFile(
+          path.join(artifactDir, `run-${run + 1}.live.cpuprofile`),
+          JSON.stringify(liveProfile.profile),
+        );
         const liveComplete = new Promise<void>((resolve) => {
           cdp.once("Tracing.tracingComplete", () => resolve());
         });

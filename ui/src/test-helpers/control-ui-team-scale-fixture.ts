@@ -53,6 +53,7 @@ type FixtureOptions = {
   liveRun?: boolean;
   sidebarListChurn?: boolean;
   sidebarLiveChurn?: boolean;
+  sessionEventChurn?: boolean;
   duplicateBootReads?: boolean;
 };
 
@@ -675,6 +676,31 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
           },
         });
       }
+    }
+  }
+  if (options.sessionEventChurn) {
+    liveEvents.splice(0);
+    for (let index = 0; index < 240; index++) {
+      const atMs = (index + 1) * 125;
+      const row = {
+        ...sessions[index % 24]!,
+        updatedAt: now + atMs,
+        snapshotAt: now + atMs,
+        lastMessagePreview: `Synthetic worker ${(index % 24) + 1}: completed checkpoint ${Math.floor(index / 24) + 1}.`,
+      };
+      liveEvents.push({
+        atMs,
+        kind: "sessions.changed.active-worker",
+        event: "sessions.changed",
+        payload: {
+          ...row,
+          sessionKey: row.key,
+          reason: "agent.run.updated",
+          ts: row.updatedAt,
+          session: row,
+          ancestorSessions: [],
+        },
+      });
     }
   }
   return {
