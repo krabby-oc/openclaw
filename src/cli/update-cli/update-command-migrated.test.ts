@@ -123,6 +123,7 @@ it.each([
   { agentId: "verification", changed: "none", blocked: undefined },
   { agentId: "main", changed: "local", blocked: undefined },
   { agentId: "main", changed: "client", blocked: undefined },
+  { agentId: "main", changed: "plugin", blocked: undefined },
   { agentId: "main", changed: "shared", blocked: "state-migrated-no-rollback" },
   { agentId: "main", changed: "agent", blocked: "state-migrated-no-rollback" },
   { agentId: "main", changed: "incomplete", blocked: "state-migrated-no-rollback" },
@@ -133,8 +134,21 @@ it.each([
   async ({ agentId, changed, blocked }) => {
     const stateDir = await fs.realpath(dirs.make("update-first-serving-turn-"));
     const env = { OPENCLAW_STATE_DIR: stateDir };
+    const config =
+      changed === "plugin"
+        ? { plugins: { load: { paths: [path.resolve("extensions/logbook")] } } }
+        : {};
     const shared = openOpenClawStateDatabase({ env });
-    const schemaVersions = await readUpdateStateSchemaVersions({ stateDir, config: {}, env });
+    const pluginPath = path.join(stateDir, "logbook", "logbook.sqlite");
+    if (changed === "plugin") {
+      await fs.mkdir(path.dirname(pluginPath), { recursive: true });
+      using db = new DatabaseSync(pluginPath);
+      db.exec("PRAGMA user_version = 1; CREATE TABLE evidence(value TEXT)");
+    }
+    const schemaVersions = await readUpdateStateSchemaVersions({ stateDir, config, env });
+    if (changed === "plugin") {
+      expect(schemaVersions).toContainEqual({ path: pluginPath, userVersion: 1 });
+    }
     if (changed === "local") {
       expect((await migrateDaemonRuntimePins(env)).warnings).toEqual([]);
     }
@@ -240,12 +254,12 @@ it.each([
               Number(changed === "shared" || changed === "retained" || changed === "pending"),
             agent: OPENCLAW_AGENT_SCHEMA_VERSION + Number(changed === "incomplete"),
           },
-          config: {},
+          config,
           env,
         }),
       ),
     ).resolves.toBe(blocked);
-    if (changed === "local") {
+    if (changed === "local" || changed === "plugin") {
       expect(result.status).toBe("ok");
     }
     if (changed === "incomplete" || changed === "pending") {

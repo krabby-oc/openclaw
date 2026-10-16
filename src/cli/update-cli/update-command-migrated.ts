@@ -8,9 +8,8 @@ import {
 } from "../../commands/doctor/shared/update-phase.js";
 import { resolveStateDir } from "../../config/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { resolveDaemonRuntimePinStorePath } from "../../daemon/runtime-pin-store.js";
-import { resolveClientCredentialStorePath } from "../../infra/client-credential-store.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { resolveUserPath } from "../../infra/home-dir.js";
 import { runtimeProcessEntrypoints } from "../../infra/runtime-process-entrypoints.js";
 import { readUpdateStateSchemaVersions } from "../../infra/update-candidate-state.js";
 import {
@@ -66,6 +65,13 @@ export async function inspectActivatedUpdateState(
   }
   let blocked: FinishUpdateParams["rollbackBlockedReason"];
   try {
+    const agentPaths = new Set(
+      [env.OPENCLAW_AGENT_DIR, env.PI_CODING_AGENT_DIR].flatMap((directory) =>
+        directory?.trim()
+          ? [path.join(resolveUserPath(directory, env), "openclaw-agent.sqlite")]
+          : [],
+      ),
+    );
     const current = await readUpdateStateSchemaVersions({
       stateDir: resolveStateDir(env),
       config,
@@ -74,16 +80,27 @@ export async function inspectActivatedUpdateState(
       nodeRunner: params.packageUpdateNodeRunner,
       timeoutMs: params.timeoutMs,
       includeRetainedAgentPaths: true,
+      onInventory: (files) => {
+        // Plugin snapshots retain their own schemas; only agent owners use the agent contract.
+        for (const database of files.values()) {
+          if (
+            database.owners?.some((owner) => owner.role === "agent") ||
+            database.registeredPaths?.length
+          ) {
+            for (const spelling of database.spellings) {
+              agentPaths.add(spelling);
+            }
+          }
+        }
+      },
     });
     const shared = current.find((entry) => entry.path === resolveOpenClawStateSqlitePath(env));
     const sharedVersion = shared ? resolveUpdateStateContentVersion(shared) : undefined;
     const incompleteAgents = candidateSchemaVersions
       ? current.filter(
           (entry) =>
-            entry !== shared &&
+            agentPaths.has(entry.path) &&
             !shared?.retainedAgentPaths?.includes(entry.path) &&
-            entry.path !== resolveClientCredentialStorePath(env) &&
-            entry.path !== resolveDaemonRuntimePinStorePath(env) &&
             entry.userVersion !== null &&
             entry.userVersion !== candidateSchemaVersions.agent,
         )

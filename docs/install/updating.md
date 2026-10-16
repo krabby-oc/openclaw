@@ -81,6 +81,9 @@ Doctor's held-store warning remains visible. Configured agents required by the
 Gateway must still pass runtime admission: Doctor fails if a recovery hold
 leaves a required store unusable. Active databases and pending deletions require
 the candidate schema, and held stores remain part of rollback verification.
+The candidate's agent schema applies only to discovered agent stores. Plugin
+databases retain their plugin-owned schema versions and remain part of the
+rollback comparison.
 
 OpenClaw.app runs plugin convergence through the selected runtime's Doctor while
 the app owns Gateway activation. This aligns managed official npm plugins with the new
