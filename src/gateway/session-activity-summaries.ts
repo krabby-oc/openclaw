@@ -329,7 +329,6 @@ export function createSessionActivitySummaries(deps: {
         publish(state, "unavailable");
         return;
       }
-      assertCurrentOwner(state, ref);
       const entry = state.entry;
       const transcriptScope = { ...scope(state), sessionId: state.sessionId };
       const source = await readActivitySummarySource({

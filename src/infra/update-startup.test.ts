@@ -81,50 +81,50 @@ describe("update-startup", () => {
   let resolveNpmChannelTag: (typeof import("./update-check.js"))["resolveNpmChannelTag"];
   let runCommandWithTimeout: (typeof import("../process/exec.js"))["runCommandWithTimeout"];
   let runGatewayUpdateCheckOwner: (typeof import("./update-startup.js"))["runGatewayUpdateCheck"];
-  let createGatewayUpdateCheck: (typeof import("./update-startup.js"))["createGatewayUpdateCheck"];
+  let startGatewayUpdateChecks: (typeof import("./update-startup.js"))["startGatewayUpdateChecks"];
   let getUpdateAvailable: (typeof import("./update-status-state.js"))["getUpdateAvailable"];
   let getUpdateEffectiveChannel: (typeof import("./update-startup.js"))["getUpdateEffectiveChannel"];
   let getUpdateSchedule: (typeof import("./update-status-state.js"))["getUpdateSchedule"];
   let refreshGatewayUpdateStatus: (typeof import("./update-status-schedule.js"))["refreshGatewayUpdateStatus"];
   let resetUpdateAvailableStateForTest: (typeof import("./update-startup.js"))["resetUpdateAvailableStateForTest"];
   let loaded = false;
-  const updateChecks = new Set<ReturnType<typeof createGatewayUpdateCheck>>();
+  const updateChecks = new Set<ReturnType<typeof createGatewayUpdateLifecycle>>();
 
   type UpdateCheckFixtureParams = Omit<
-    Parameters<typeof createGatewayUpdateCheck>[0],
+    Parameters<typeof startGatewayUpdateChecks>[0],
     "getConfig" | "log" | "isNixMode" | "lifecycle" | "applyRemoteCatalogUpdate"
   > & {
     cfg: OpenClawConfig;
-    log?: Parameters<typeof createGatewayUpdateCheck>[0]["log"];
+    log?: Parameters<typeof startGatewayUpdateChecks>[0]["log"];
     isNixMode?: boolean;
     applyRemoteCatalogUpdate?: Parameters<
-      typeof createGatewayUpdateCheck
+      typeof startGatewayUpdateChecks
     >[0]["applyRemoteCatalogUpdate"];
   };
 
-  function createTestUpdateCheck({
+  function createTestUpdateLifecycle() {
+    const lifecycle = createGatewayUpdateLifecycle(scheduler);
+    updateChecks.add(lifecycle);
+    return lifecycle;
+  }
+
+  function scheduleGatewayUpdateCheck({
     cfg,
     log = { info: vi.fn() },
     isNixMode = false,
     applyRemoteCatalogUpdate = async () => "unchanged",
     ...params
   }: UpdateCheckFixtureParams) {
-    const check = createGatewayUpdateCheck({
+    const lifecycle = createTestUpdateLifecycle();
+    startGatewayUpdateChecks({
       ...params,
       log,
       isNixMode,
       getConfig: () => cfg,
       applyRemoteCatalogUpdate,
-      lifecycle: createGatewayUpdateLifecycle(scheduler),
+      lifecycle,
     });
-    updateChecks.add(check);
-    return check;
-  }
-
-  function scheduleGatewayUpdateCheck(params: UpdateCheckFixtureParams) {
-    const check = createTestUpdateCheck(params);
-    check.start();
-    return check.stop;
+    return lifecycle.stop;
   }
 
   function runGatewayUpdateCheck({
@@ -197,7 +197,7 @@ describe("update-startup", () => {
       ({ runCommandWithTimeout } = await import("../process/exec.js"));
       ({
         runGatewayUpdateCheck: runGatewayUpdateCheckOwner,
-        createGatewayUpdateCheck,
+        startGatewayUpdateChecks,
         getUpdateEffectiveChannel,
         resetUpdateAvailableStateForTest,
       } = await import("./update-startup.js"));
@@ -244,7 +244,7 @@ describe("update-startup", () => {
       installRoot: "/opt/openclaw",
     });
     resetUpdateAvailableStateForTest(scheduler);
-    createTestUpdateCheck({ cfg: {} });
+    createTestUpdateLifecycle();
   });
 
   afterEach(async () => {
@@ -958,9 +958,7 @@ describe("update-startup", () => {
       (fetchGit ? remoteEntered : initialEntered).resolve();
       return fetchGit ? remote.promise : initial.promise;
     });
-    const check = createTestUpdateCheck({
-      cfg: { update: { channel: "dev" } },
-    });
+    const check = createTestUpdateLifecycle();
     const initializing = check.initialize().catch((error: unknown) => error);
     const refreshing = refreshGatewayUpdateStatus(() => ({ update: { channel: "dev" } })).catch(
       (error: unknown) => error,
@@ -985,7 +983,13 @@ describe("update-startup", () => {
       await stopping;
       expect(getUpdateSchedule()).toBeNull();
       await expect(getUpdateEffectiveChannel()).rejects.toMatchObject({ name: "AbortError" });
-      check.start();
+      startGatewayUpdateChecks({
+        lifecycle: check,
+        getConfig: () => ({ update: { channel: "dev" } }),
+        applyRemoteCatalogUpdate: async () => "unchanged",
+        log: { info: vi.fn() },
+        isNixMode: false,
+      });
       await clock.advanceBy(0);
       expect(checkUpdateStatus).toHaveBeenCalledTimes(2);
       expect(refreshRemoteModelCatalogMock).not.toHaveBeenCalled();
@@ -1011,7 +1015,7 @@ describe("update-startup", () => {
       log: { info: vi.fn() },
       isNixMode: false,
     };
-    createTestUpdateCheck(params);
+    createTestUpdateLifecycle();
     const oldRefresh = refreshGatewayUpdateStatus(() => params.cfg);
     expect(refreshGatewayUpdateStatus(() => params.cfg)).toBe(oldRefresh);
     const refreshing = oldRefresh.catch((error: unknown) => error);
@@ -1021,7 +1025,7 @@ describe("update-startup", () => {
     try {
       await withinTest(entered.promise, signal);
       const oldSignal = vi.mocked(checkUpdateStatus).mock.calls[0]?.[0].signal;
-      const replacement = createTestUpdateCheck(params);
+      const replacement = createTestUpdateLifecycle();
       initializing = replacement.initialize().catch((error: unknown) => error);
       const newRefresh = refreshGatewayUpdateStatus(() => params.cfg);
       expect(newRefresh).not.toBe(oldRefresh);
@@ -1114,9 +1118,8 @@ describe("update-startup", () => {
       isNixMode: false,
       lifecycle: createGatewayUpdateLifecycle(scheduler),
     };
-    const check = createGatewayUpdateCheck(params);
-    updateChecks.add(check);
-    check.start();
+    updateChecks.add(params.lifecycle);
+    startGatewayUpdateChecks(params);
     await clock.advanceBy(0);
     expect(getUpdateSchedule()?.channel).toBe("beta");
 
