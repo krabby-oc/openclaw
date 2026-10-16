@@ -332,6 +332,7 @@ async function createConsistentStateSnapshotPlan(params: {
         ? {
             inventory: sealBackupResourceInventory(params.resources, []),
             snapshots: [],
+            postgresSnapshots: [],
             discoveredSourcePaths: new Set<string>(),
           }
         : await captureSqlite(params.tempDir),
@@ -660,6 +661,7 @@ async function createBackupArchiveInScope(opts: BackupCreateOptions): Promise<Ba
                     ? { sourcePath: snapshot.sourcePath, role: "agent", agentId: snapshot.agentId }
                     : { sourcePath: snapshot.sourcePath, role: "global" },
                 );
+                manifest.postgresSnapshots = stateSqliteBackup.postgresSnapshots;
                 const contents = Buffer.from(JSON.stringify(manifest, null, 2) + "\n");
                 const sizeError = backupManifestSizeError(contents.length);
                 if (sizeError) {
