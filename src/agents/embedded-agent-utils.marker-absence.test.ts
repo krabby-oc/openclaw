@@ -76,6 +76,11 @@ describe("streamed marker projection", () => {
     ["another provider", "<mm:thought>secret</mm:thought>Answer", "Answer"],
     ["private tags", "<internal>secret</internal>Answer", "Answer"],
     ["quoted reasoning attributes", '<think note="a>b">secret</think>Answer', "Answer"],
+    [
+      "malformed quotes around nested private tags",
+      '<thinking x="<internal>private reflection</internal>',
+      '<thinking x="',
+    ],
     ["late final tags", "<div>Visible</div><final> Tail</final>", "<div>Visible</div> Tail"],
     ["malformed final attributes", '<final reason="a>b">visible', '<final reason="a>b">visible'],
     [
