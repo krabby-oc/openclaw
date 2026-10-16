@@ -54,6 +54,7 @@ type FixtureOptions = {
   sidebarListChurn?: boolean;
   sidebarLiveChurn?: boolean;
   duplicateBootReads?: boolean;
+  closedMenuMembers?: boolean;
 };
 
 function personId(index: number) {
@@ -183,6 +184,16 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
     : undefined;
   if (duplicateReads) {
     assets.set(duplicateReads.mediaPath, duplicateReads.asset);
+  }
+  const sharingPeople = options.closedMenuMembers ? people.slice(34, 82) : [];
+  for (const person of sharingPeople) {
+    const profile = profiles.find((entry) => entry.id === person.id)!;
+    profile.hasAvatar = true;
+    profile.avatarMime = "image/svg+xml";
+    assets.set(`/api/users/${person.id}/avatar`, {
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="teal"/></svg>',
+    });
   }
   pinnedRows[0]!.sharingRole = "admin";
   pinnedRows[0]!.visibility = "shared";
@@ -439,6 +450,27 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
       ...(duplicateReads?.featureMethods ?? []),
     ],
     methodResponses: {
+      ...(options.closedMenuMembers
+        ? {
+            "session.members.listEvidence": {
+              sessionKey: selectedSessionKey,
+              role: "admin",
+              allowedVisibilities: ["shared", "read-only", "suggest", "draft"],
+              members: sharingPeople.slice(0, 6).map((person) => ({
+                identityId: person.id,
+                addedBy: people[0]!.id,
+                addedAt: now,
+              })),
+              identities: sharingPeople.map((person) => ({
+                id: person.id,
+                type: "human",
+                identity: person.identity,
+                label: person.name,
+                avatarUrl: `/api/users/${person.id}/avatar?v=${now}`,
+              })),
+            },
+          }
+        : {}),
       "question.list": { questions: [] },
       ...duplicateReads?.methodResponses,
       "agents.list": agents,

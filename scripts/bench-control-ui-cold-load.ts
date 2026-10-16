@@ -210,6 +210,7 @@ const { values } = parseArgs({
     "sidebar-list-churn": { type: "boolean", default: false },
     "sidebar-live-churn": { type: "boolean", default: false },
     "duplicate-boot-reads": { type: "boolean", default: false },
+    "closed-menu-members": { type: "boolean", default: false },
     "capture-ms": { type: "string", default: "0" },
     "sidebar-row-transfer": { type: "string", default: "full" },
     "bundle-dir": { type: "string" },
@@ -293,6 +294,7 @@ const fixture = createControlUiTeamScaleFixture({
   sidebarListChurn: values["sidebar-list-churn"],
   sidebarLiveChurn: values["sidebar-live-churn"],
   duplicateBootReads: values["duplicate-boot-reads"],
+  closedMenuMembers: values["closed-menu-members"],
 });
 const streamingReply = values["streaming-reply"] ? createControlUiStreamingReply() : undefined;
 const extraInitScripts = await Promise.all(
@@ -386,7 +388,7 @@ try {
       return asset ? route.fulfill({ status: 200, ...asset }) : route.fallback();
     });
   }
-  if (values["sidebar-live-churn"]) {
+  if (values["sidebar-live-churn"] || values["closed-menu-members"]) {
     await page.route("**/api/users/*/avatar?*", async (route) => {
       const asset = fixture.assets.get(new URL(route.request().url()).pathname);
       if (!asset) {
