@@ -3,6 +3,8 @@ import path from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import { withTempWorkspace } from "@openclaw/fs-safe/temp";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveDatabaseEngineSelection } from "../infra/database-engine/config.js";
+import { withDatabaseEngineSelection } from "../infra/database-engine/context.js";
 import { readEngineAnchor } from "../infra/database-engine/open.js";
 import type { DatabasePortPluginOwners } from "../infra/database-engine/port-descriptor.js";
 import {
@@ -53,12 +55,17 @@ export async function runOfflineDatabaseBackup<T>(
       "PostgreSQL backup requires the Gateway stopped; stop through the service owner, then rerun.",
     );
   }
+  const { createConfigIO } = await import("../config/config.js");
+  const { config } = await createConfigIO({
+    observe: false,
+    pluginValidation: "core-only",
+  }).readConfigFileSnapshot();
   return runWithLocalStateOwner({
     method: "backup.create",
     params: {},
     target: sourcePath,
     onForeignOwner: "refuse",
-    runLocal: run,
+    runLocal: ({ assertCurrent }) => run({ config, assertCurrent }),
   });
 }
 
@@ -283,18 +290,22 @@ async function runBackupTask<T>(task: BackupTask, assertCurrent: () => void): Pr
   // This one-shot worker is joined before publication; it never survives a runtime swap.
   const { WorkerTaskPool } = await import("../infra/worker-task-pool.js");
   const source = captureRuntimeWorkerSource(new URL(import.meta.url));
-  const pool = new WorkerTaskPool<BackupTask, T>({
-    workerUrl: source.moduleUrl,
-    maxWorkers: 1,
-    workerOptions: { workerData: { openclawDatabaseBackup: true } },
+  const selection = await resolveDatabaseEngineSelection(task.params.config);
+  assertCurrent();
+  return withDatabaseEngineSelection(selection, async () => {
+    const pool = new WorkerTaskPool<BackupTask, T>({
+      workerUrl: source.moduleUrl,
+      maxWorkers: 1,
+      workerOptions: { workerData: { openclawDatabaseBackup: true } },
+    });
+    try {
+      const result = await pool.run(task, {});
+      assertCurrent();
+      return result;
+    } finally {
+      await pool.close();
+    }
   });
-  try {
-    const result = await pool.run(task, {});
-    assertCurrent();
-    return result;
-  } finally {
-    await pool.close();
-  }
 }
 
 export function capturePostgresBackup(
