@@ -1,8 +1,8 @@
 import { createComponent, createSignal } from "solid-js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
+import { PRESENTATION_CHANGED_EVENT } from "../../../lib/presentation.ts";
 import { ContentPresentation } from "../../../lib/solid/presentation.ts";
-import { PRESENTATION_CHANGED_EVENT } from "../../../lit/presentation-binding.ts";
 import { mountSolid } from "../../../test-helpers/mount-solid.ts";
 import { flush } from "../../../test-helpers/solid-settle.ts";
 import { ChatDetailsSession } from "./chat-details-session.tsx";
@@ -252,6 +252,7 @@ it.each([
               presented: true,
               props: {
                 sessionKey: "agent:main:cards",
+                selectedSession: undefined,
                 currentAgentId: "main",
                 messages: [],
                 pullRequests: [pullRequest, { ...pullRequest, number: 173825, state }],
