@@ -9,15 +9,12 @@ import {
 import { applyProviderAuthConfigPatch } from "openclaw/plugin-sdk/provider-auth";
 import type { ModelDefinitionConfig } from "openclaw/plugin-sdk/provider-onboard";
 import { WizardCancelledError } from "openclaw/plugin-sdk/setup";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Agent, EnvHttpProxyAgent, ProxyAgent } from "undici";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRuntimeSpies } from "../test-support/runtime-spies.js";
 import plugin from "./index.js";
 
-const discoveryFetch = vi.hoisted(() => vi.fn());
-vi.mock("../../src/infra/net/fetch-guard.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../src/infra/net/fetch-guard.js")>()),
-  fetchWithSsrFGuard: discoveryFetch,
-}));
+const discoveryFetch = vi.fn();
 
 const servedModel: ModelDefinitionConfig = {
   id: "local-qwen",
@@ -30,10 +27,7 @@ const servedModel: ModelDefinitionConfig = {
 };
 
 function reply(body: unknown, status = 200) {
-  return {
-    response: Response.json(body, { status }),
-    release: async () => {},
-  };
+  return Response.json(body, { status });
 }
 
 function createPrompter(
@@ -114,18 +108,23 @@ describe("LiteLLM discovery-backed onboarding", () => {
     discoveryFetch.mockImplementation(async () =>
       reply({ data: [{ id: "local-qwen" }, { id: "team/second-model" }] }),
     );
+    vi.stubGlobal("__OPENCLAW_TEST_UNDICI_RUNTIME_DEPS__", {
+      Agent,
+      EnvHttpProxyAgent,
+      ProxyAgent,
+      fetch: discoveryFetch,
+    });
   });
+  afterEach(() => vi.unstubAllGlobals());
 
   it("defaults to the first served model and saves it without the hosted seed", async () => {
     const prompter = createPrompter({ baseUrl: "http://127.0.0.1:4000" });
     const { result, config } = await configure({ prompter });
 
     expect(discoveryFetch).toHaveBeenCalledExactlyOnceWith(
+      "http://127.0.0.1:4000/v1/models",
       expect.objectContaining({
-        url: "http://127.0.0.1:4000/v1/models",
-        init: expect.objectContaining({
-          headers: expect.objectContaining({ Authorization: "Bearer resolved-fixture-key" }),
-        }),
+        headers: expect.objectContaining({ Authorization: "Bearer resolved-fixture-key" }),
       }),
     );
     expect(prompter.select).toHaveBeenCalledWith(
@@ -176,10 +175,9 @@ describe("LiteLLM discovery-backed onboarding", () => {
     const { result } = await configure({ ref: true });
 
     expect(discoveryFetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:4000/v1/models",
       expect.objectContaining({
-        init: expect.objectContaining({
-          headers: expect.objectContaining({ Authorization: "Bearer resolved-reference-key" }),
-        }),
+        headers: expect.objectContaining({ Authorization: "Bearer resolved-reference-key" }),
       }),
     );
     expect(result.profiles).toEqual([

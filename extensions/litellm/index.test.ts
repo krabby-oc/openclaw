@@ -21,18 +21,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRuntimeSpies } from "../test-support/runtime-spies.js";
 import plugin from "./index.js";
 
-vi.mock("../../src/infra/net/fetch-guard.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/infra/net/fetch-guard.js")>();
+vi.mock("openclaw/plugin-sdk/provider-setup", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/provider-setup")>();
   return {
     ...actual,
-    fetchWithSsrFGuard: async (params: Parameters<typeof actual.fetchWithSsrFGuard>[0]) =>
-      params.auditContext === "self-hosted-provider-discovery"
-        ? {
-            response: Response.json({ data: [{ id: "custom-model" }] }),
-            finalUrl: params.url,
-            release: async () => {},
-          }
-        : actual.fetchWithSsrFGuard(params),
+    discoverOpenAICompatibleLocalModels: async () => ({
+      kind: "success",
+      health: "unknown",
+      rows: [{ model: { id: "custom-model" } }],
+      fetchedAt: Date.now(),
+    }),
   };
 });
 
