@@ -14,6 +14,7 @@ function installColdLoadProbes(
   createEventStream: typeof createColdLoadEventStream,
 ) {
   Reflect.set(Error, "stackTraceLimit", 40);
+  const captureOwners = input.captureOwners !== false;
   const updates = new Map<string, { count: number; ms: number }>();
   const rpcs: Array<{
     method: string;
@@ -356,7 +357,9 @@ function installColdLoadProbes(
     },
   };
   // The init script precedes application modules, including their host→owner maps.
-  window.WeakMap = RegistrationWeakMap;
+  if (captureOwners) {
+    window.WeakMap = RegistrationWeakMap;
+  }
   window.addEventListener(
     "pagehide",
     () => {
@@ -526,11 +529,16 @@ function installColdLoadProbes(
     startLive() {
       liveStartedAt = performance.now();
       liveRpcOffset = rpcs.length;
-      frameProbe.install();
+      if (captureOwners) {
+        frameProbe.install();
+      }
       const sidebar = document.querySelector("openclaw-app-sidebar");
       sidebarRegistration.restore();
-      chatProbe.install();
+      if (captureOwners) {
+        chatProbe.install();
+      }
       if (
+        captureOwners &&
         sidebar &&
         !solidSidebarOwner &&
         typeof Reflect.get(sidebar, "performUpdate") !== "function"
@@ -569,9 +577,10 @@ function installColdLoadProbes(
           };
         }
       }
-      const owner: ProbeInit.SessionDataProbeOwner | undefined =
-        solidSidebarOwner?.sessionData ??
-        (sidebar ? Reflect.get(sidebar, "sessionData") : undefined);
+      const owner: ProbeInit.SessionDataProbeOwner | undefined = captureOwners
+        ? (solidSidebarOwner?.sessionData ??
+          (sidebar ? Reflect.get(sidebar, "sessionData") : undefined))
+        : undefined;
       if (owner) {
         const original = owner.requestSessionDataUpdate;
         owner.requestSessionDataUpdate = function (...args: unknown[]) {
@@ -615,7 +624,8 @@ function installColdLoadProbes(
         ),
         stacks: Object.fromEntries(liveStacks),
         sidebarInvalidations: Object.fromEntries(liveOrigins),
-        solidChat: chatProbe.read(),
+        ownerProbes: captureOwners,
+        solidChat: captureOwners ? chatProbe.read() : null,
         solidSidebar: solidSidebarOwner
           ? {
               measurement: "owner-invalidations-and-projection-lifecycle-passes",
