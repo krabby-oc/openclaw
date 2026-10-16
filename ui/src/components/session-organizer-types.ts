@@ -7,11 +7,11 @@ import type {
   SidebarRecentSession,
   SidebarSessionStatusFilter,
 } from "./app-sidebar-session-types.ts";
-import type { SessionDataController } from "./session-data-controller.ts";
+import type { SessionDataOwner } from "./session-data.ts";
 
 export interface SessionOrganizerDependencies {
   readonly sessionData: Pick<
-    SessionDataController,
+    SessionDataOwner,
     | "beginSessionMutation"
     | "isSessionMutationScopeCurrent"
     | "publishSessionMutationError"

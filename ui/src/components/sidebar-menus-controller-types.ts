@@ -14,7 +14,7 @@ import type {
   SidebarRecentSession,
   SidebarSessionSortMode,
 } from "./app-sidebar-session-types.ts";
-import type { SessionDataController } from "./session-data-controller.ts";
+import type { SessionDataOwner } from "./session-data.ts";
 import type { SessionOrganizer, SessionOrganizerDependencies } from "./session-organizer.ts";
 
 export interface SidebarMenusControllerHost extends SessionOrganizerDependencies {
@@ -44,7 +44,7 @@ export interface SidebarMenusControllerHost extends SessionOrganizerDependencies
   readonly selectedSessionKeys: ReadonlySet<string>;
   readonly sessionData: SessionOrganizerDependencies["sessionData"] &
     Pick<
-      SessionDataController,
+      SessionDataOwner,
       | "context"
       | "activeSessionLineageRoot"
       | "activeSessionLineageSelectedRow"
