@@ -1565,6 +1565,46 @@ describe("scheduleRestartSentinelWake", () => {
     });
   });
 
+  it("settles delivered media when only its completion turn is refused", async () => {
+    const entry = await enqueueGeneratedMedia({
+      messageId: "image:task-refused-turn:agent-loop",
+      expectedMediaUrls: ["/tmp/proof.png"],
+      expectedMediaAttachments: { "/tmp/proof.png": { type: "image", path: "/tmp/proof.png" } },
+    });
+    mocks.dispatchGatewayMethodInProcess.mockImplementationOnce(async () => {
+      const { SessionDeliveryDeadLetteredError } =
+        await import("../infra/session-delivery-queue.records.js");
+      throw new SessionDeliveryDeadLetteredError("requester session changed");
+    });
+
+    await deliverGeneratedMediaThenCompletion(entry);
+
+    expect(mocks.sendDurableMessageBatchCore).toHaveBeenCalledTimes(1);
+    expect(mocks.markSessionDeliverySettlement).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "moved-to-failed",
+      expect.anything(),
+    );
+  });
+
+  it("dead-letters a refused completion turn that carries no delivered media", async () => {
+    const entry = await enqueueGeneratedMedia({
+      messageId: "image:task-refused-failure:agent-loop",
+    });
+    mocks.dispatchGatewayMethodInProcess.mockImplementationOnce(async () => {
+      const { SessionDeliveryDeadLetteredError } =
+        await import("../infra/session-delivery-queue.records.js");
+      throw new SessionDeliveryDeadLetteredError("requester session changed");
+    });
+
+    await expect(deliverGeneratedMedia(entry)).rejects.toThrow("requester session changed");
+    expect(mocks.markSessionDeliverySettlement).toHaveBeenCalledWith(
+      expect.objectContaining({ id: entry.id }),
+      "moved-to-failed",
+      expectQueueContext(),
+    );
+  });
+
   it("keeps a completion-turn rejection before acceptance retryable", async () => {
     mocks.dispatchGatewayMethodInProcess.mockRejectedValueOnce(new Error("gateway unavailable"));
 

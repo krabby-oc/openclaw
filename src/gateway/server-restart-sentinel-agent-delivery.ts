@@ -298,6 +298,23 @@ export async function deliverQueuedGeneratedMediaCompletion(params: {
     return false;
   }
 
+  // Only produced media records attachments. With them already sent, losing
+  // the follow-up turn is not a media delivery failure, so the row settles
+  // instead of reporting undelivered media for blocked retention.
+  const mediaUrls = entry.expectedMediaUrls ?? [];
+  const mediaDelivered =
+    mediaUrls.length === 0 && Object.keys(entry.expectedMediaAttachments ?? {}).length > 0;
+  const abandonCompletion = async (reason: string): Promise<true> => {
+    if (!mediaDelivered) {
+      return await deadLetterSessionDelivery(entry, reason, params.queueContext);
+    }
+    log.warn("generated media was delivered; its completion turn was skipped", {
+      queueId: entry.id,
+      reason,
+    });
+    return true;
+  };
+
   params.queueContext.admission.assertCurrent();
   const resolveConfig = () =>
     params.resolveGatewayContext?.()?.getRuntimeConfig() ?? getRuntimeConfig();
@@ -337,42 +354,39 @@ export async function deliverQueuedGeneratedMediaCompletion(params: {
         })
       ).entry;
     }
-    try {
-      return await withSessionEntryReadOnlyInWorker(
-        { ...binding, env: params.queueContext.environment, hydrateSkillPromptRefs: false },
-        assertRequesterAdmissionCurrent,
-        async (read) => {
-          if (!read.ok) {
-            throw read.error;
-          }
-          if (
-            !sessionMatchesExpectedTranscriptTurn(read.value ? { entry: read.value } : undefined, {
-              expectedSessionId: binding.sessionId,
-              expectedLifecycleRevision: binding.lifecycleRevision,
-            })
-          ) {
-            throw new SessionDeliveryDeadLetteredError(
-              "media completion requester session changed",
-            );
-          }
-          return read.value;
-        },
-      );
-    } catch (error) {
-      if (error instanceof SessionDeliveryDeadLetteredError) {
-        return deadLetterSessionDelivery(entry, error.message, params.queueContext);
-      }
-      throw error;
-    }
+    return await withSessionEntryReadOnlyInWorker(
+      { ...binding, env: params.queueContext.environment, hydrateSkillPromptRefs: false },
+      assertRequesterAdmissionCurrent,
+      async (read) => {
+        if (!read.ok) {
+          throw read.error;
+        }
+        if (
+          !sessionMatchesExpectedTranscriptTurn(read.value ? { entry: read.value } : undefined, {
+            expectedSessionId: binding.sessionId,
+            expectedLifecycleRevision: binding.lifecycleRevision,
+          })
+        ) {
+          throw new SessionDeliveryDeadLetteredError("media completion requester session changed");
+        }
+        return read.value;
+      },
+    );
   };
-  const sessionEntry = binding ? await readRequester() : params.sessionEntry;
+  let sessionEntry: SessionEntry | undefined;
+  try {
+    sessionEntry = binding ? await readRequester() : params.sessionEntry;
+  } catch (error) {
+    if (error instanceof SessionDeliveryDeadLetteredError) {
+      return await abandonCompletion(error.message);
+    }
+    throw error;
+  }
   // A started attempt may already have produced effects: an interrupted
   // completion turn, or an agent turn persisted by an older release.
   if (entry.deliveryStartedAt !== undefined) {
-    await deadLetterSessionDelivery(
-      entry,
+    return await abandonCompletion(
       "queued generated-media completion dead-lettered after an interrupted unproven attempt",
-      params.queueContext,
     );
   }
   const assertRequesterIdle = () => {
@@ -393,7 +407,6 @@ export async function deliverQueuedGeneratedMediaCompletion(params: {
     throw error;
   }
 
-  const mediaUrls = entry.expectedMediaUrls ?? [];
   if (mediaUrls.length > 0) {
     if (route.channel === INTERNAL_MESSAGE_CHANNEL) {
       await persistQueuedGeneratedMedia({
@@ -488,7 +501,7 @@ export async function deliverQueuedGeneratedMediaCompletion(params: {
     );
   } catch (error) {
     if (error instanceof SessionDeliveryDeadLetteredError) {
-      return deadLetterSessionDelivery(entry, error.message, params.queueContext);
+      return await abandonCompletion(error.message);
     }
     if (!accepted) {
       throw new SessionDeliverySafeRetryError(
