@@ -258,7 +258,11 @@ if (sidebarView !== "sessions" && sidebarView !== "online") {
 }
 const cpuProfile = values["cpu-profile"] || Boolean(values["cpu-profile-compare"]);
 const baselineCpu = values["cpu-profile-compare"]
-  ? readCpuProfileReport(JSON.parse(await readFile(values["cpu-profile-compare"], "utf8")))
+  ? readCpuProfileReport(JSON.parse(await readFile(values["cpu-profile-compare"], "utf8")), [
+      "reload",
+      ...(values["live-events"] ? ["live"] : []),
+      ...(values["streaming-reply"] ? ["streaming"] : []),
+    ])
   : undefined;
 const cpuRuns: Record<string, ColdLoadCpuTables[]> = {};
 const runs = Number(values.runs);
@@ -1028,11 +1032,8 @@ try {
         ),
       );
       if (baselineCpu) {
-        const before = baselineCpu[phase];
-        if (!before) {
-          throw new Error(`Baseline CPU report is missing the ${phase} phase`);
-        }
-        comparisons[phase] = compareCpuTables(before, tables);
+        // SAFETY: Baseline phases were validated against the enabled benchmark phases.
+        comparisons[phase] = compareCpuTables(baselineCpu[phase]!, tables);
         console.log(
           formatCpuTables(
             `${phase} CPU delta (candidate minus baseline)`,
