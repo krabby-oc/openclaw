@@ -22,7 +22,7 @@ import {
   createSolidApplicationContextProvider,
 } from "../test-helpers/solid-application-context.tsx";
 import { flush } from "../test-helpers/solid-settle.ts";
-import { CanvasWidgetView, type OpenClawCanvasWidgetView } from "./canvas-widget-view.ts";
+import { CanvasWidgetView, type OpenClawCanvasWidgetView } from "./canvas-widget-view.tsx";
 import { WIDGET_PROMPT_EVENT } from "./mcp-app-security.ts";
 
 const elementName = "openclaw-canvas-widget-view";
