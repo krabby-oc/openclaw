@@ -30,7 +30,7 @@ export function createTeamScalePeople(count: number, now: number, avatars = fals
     displayName: person.name ?? null,
     emails: person.email ? [person.email] : [],
     avatarMime: avatars ? "image/png" : null,
-    hasAvatar: Boolean(avatars),
+    hasAvatar: avatars,
     githubIdentity: null,
     mergedInto: null,
     createdAt: now - 86_400_000,
