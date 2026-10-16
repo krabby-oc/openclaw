@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { writeSessionEntry } from "../config/sessions/session-accessor.sqlite-entry-store.js";
 import * as sqlite from "../infra/node-sqlite.js";
-import { readSqliteDatabaseCleanClose } from "../infra/sqlite-database-admission.js";
+import { readSqliteDatabaseCleanClose as isClean } from "../infra/sqlite-database-admission.js";
 import * as integrityWorker from "../infra/sqlite-integrity-worker.js";
 import type { SqliteIntegrityDiagnostics } from "../infra/sqlite-integrity.js";
 import {
@@ -14,26 +14,26 @@ import {
 } from "../process/gateway-work-admission.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import {
-  claimOpenClawAgentDatabaseLease,
+  claimOpenClawAgentDatabaseLease as claimLease,
   invalidateOpenClawAgentDatabaseIntegrityBeforeMutation,
-  releaseOpenClawAgentDatabaseLease,
+  releaseOpenClawAgentDatabaseLease as releaseLease,
 } from "./openclaw-agent-db-lease.js";
 import { closeCachedOpenClawAgentDatabase } from "./openclaw-agent-db-lifecycle.js";
 import * as schema from "./openclaw-agent-db-schema.js";
 import {
-  closeOpenClawAgentDatabaseByPath,
-  closeOpenClawAgentDatabasesAsync,
-  closeOpenClawAgentDatabasesForTest,
-  openOpenClawAgentDatabase,
-  resolveOpenClawAgentSqlitePath,
-  runOpenClawAgentWriteTransaction,
-  withOpenClawAgentDatabaseAdmission,
-  withOpenClawAgentDatabaseAsync,
+  closeOpenClawAgentDatabaseByPath as closeAgent,
+  closeOpenClawAgentDatabasesAsync as closeAgentsAsync,
+  closeOpenClawAgentDatabasesForTest as closeAgents,
+  openOpenClawAgentDatabase as openAgent,
+  resolveOpenClawAgentSqlitePath as agentPath,
+  runOpenClawAgentWriteTransaction as writeAgent,
+  withOpenClawAgentDatabaseAdmission as withAgentAdmission,
+  withOpenClawAgentDatabaseAsync as withAgent,
 } from "./openclaw-agent-db.js";
 import * as verifier from "./openclaw-database-verify.js";
 import {
-  closeOpenClawStateDatabaseForTest,
-  openOpenClawStateDatabase,
+  closeOpenClawStateDatabaseForTest as closeStateForTest,
+  openOpenClawStateDatabase as openState,
 } from "./openclaw-state-db.js";
 import { resolveQuarantineStorePath } from "./openclaw-state-db.paths.js";
 import { createUnsafeIndexDrift } from "./sqlite-index-drift.test-support.js";
@@ -81,9 +81,9 @@ vi.mock("../logging/subsystem.js", async (importOriginal) => {
 afterEach(async () => {
   vi.restoreAllMocks();
   logger.info.mockClear();
-  await closeOpenClawAgentDatabasesAsync();
-  closeOpenClawAgentDatabasesForTest();
-  closeOpenClawStateDatabaseForTest();
+  await closeAgentsAsync();
+  closeAgents();
+  closeStateForTest();
 });
 
 it("certifies idle handles after grace and borrowed handles only after their final release", async () => {
@@ -91,11 +91,11 @@ it("certifies idle handles after grace and borrowed handles only after their fin
   const options = makeOptions("idle");
   const { env } = options;
   const heldOptions = { agentId: "held", env };
-  const idle = openOpenClawAgentDatabase(options);
-  const held = openOpenClawAgentDatabase(heldOptions);
+  const idle = openAgent(options);
+  const held = openAgent(heldOptions);
   const entered = createDeferredCore();
   const release = createDeferredCore();
-  const borrowed = withOpenClawAgentDatabaseAsync(heldOptions, async (database) => {
+  const borrowed = withAgent(heldOptions, async (database) => {
     entered.resolve();
     await release.promise;
     expect(database.db.prepare("SELECT 1 AS value").get()).toEqual({ value: 1 });
@@ -108,22 +108,22 @@ it("certifies idle handles after grace and borrowed handles only after their fin
     beginGatewayShutdownCleanup();
     await vi.advanceTimersByTimeAsync(0);
     expect(idle.db.isOpen).toBe(false);
-    expect(readSqliteDatabaseCleanClose(idle.path)).toBe(true);
+    expect(isClean(idle.path)).toBe(true);
     expect(held.db.isOpen).toBe(true);
-    expect(readSqliteDatabaseCleanClose(held.path)).toBe(false);
+    expect(isClean(held.path)).toBe(false);
     release.resolve();
     await borrowed;
     await vi.advanceTimersByTimeAsync(0);
     expect(held.db.isOpen).toBe(false);
-    expect(readSqliteDatabaseCleanClose(held.path)).toBe(true);
-    await withOpenClawAgentDatabaseAsync(options, async (reopened) => {
+    expect(isClean(held.path)).toBe(true);
+    await withAgent(options, async (reopened) => {
       await Promise.resolve();
       expect(reopened.db.isOpen).toBe(true);
       reopened.db.exec("INSERT INTO auth_profile_state VALUES ('seal-reopen', '{}', 1)");
-      expect(readSqliteDatabaseCleanClose(idle.path)).toBe(false);
+      expect(isClean(idle.path)).toBe(false);
     });
     await vi.advanceTimersByTimeAsync(0);
-    expect(readSqliteDatabaseCleanClose(idle.path)).toBe(true);
+    expect(isClean(idle.path)).toBe(true);
   } finally {
     release.resolve();
     await borrowed;
@@ -134,28 +134,28 @@ it("certifies idle handles after grace and borrowed handles only after their fin
 
 it("retains admission through pinned WAL eviction and certifies the final checkpointed close", async () => {
   const options = makeOptions("main");
-  const pathname = resolveOpenClawAgentSqlitePath(options);
+  const pathname = agentPath(options);
   const { open, checks, worker, quickCheck } = observeIntegrityChecks(
     pathname,
     /^PRAGMA integrity_check(?:\('sqlite_schema'\))?;?$/,
   );
   const write = (updatedAt: number) =>
-    runOpenClawAgentWriteTransaction(
+    writeAgent(
       (database) =>
         writeSessionEntry(database, "agent:main:integrity", { sessionId: "retained", updatedAt }),
       options,
     );
   write(1);
-  const reader = open(pathname, { readOnly: true });
-  try {
+  {
+    using reader = open(pathname, { readOnly: true });
     reader.exec("BEGIN");
     reader.prepare("SELECT updated_at FROM session_nodes").all();
     for (let iteration = 2; iteration <= 9; iteration += 1) {
       write(iteration);
-      const database = openOpenClawAgentDatabase(options);
+      const database = openAgent(options);
       closeCachedOpenClawAgentDatabase(database);
       expect(database.db.isOpen).toBe(false);
-      await withOpenClawAgentDatabaseAsync(options, (reopened) => {
+      await withAgent(options, (reopened) => {
         expect(reopened.db.prepare("SELECT updated_at FROM session_nodes").get()).toEqual({
           updated_at: iteration,
         });
@@ -163,56 +163,50 @@ it("retains admission through pinned WAL eviction and certifies the final checkp
     }
     expect(checks.length + worker.mock.calls.length).toBe(1);
     expect(quickCheck).not.toHaveBeenCalled();
-  } finally {
-    reader.close();
   }
-  closeOpenClawAgentDatabasesForTest();
-  expect(readSqliteDatabaseCleanClose(pathname)).toBe(true);
-  openOpenClawAgentDatabase(options);
+  closeAgents();
+  expect(isClean(pathname)).toBe(true);
+  openAgent(options);
   expect(checks.length + worker.mock.calls.length).toBe(1);
   expect(quickCheck).not.toHaveBeenCalled();
 });
 
 it("checks once across writes and physical admitted reopens, including after lifecycle reset", async () => {
   const options = makeOptions("integrity-cache");
-  const pathname = resolveOpenClawAgentSqlitePath(options);
+  const pathname = agentPath(options);
   const { checks, worker, quickCheck } = observeIntegrityChecks(
     pathname,
     /^PRAGMA (integrity_check|foreign_key_check)(?:\('sqlite_schema'\))?;$/,
   );
-  const first = openOpenClawAgentDatabase(options);
+  const first = openAgent(options);
   expect(checks).toEqual(["PRAGMA integrity_check;", "PRAGMA foreign_key_check;"]);
   first.db.exec("INSERT INTO auth_profile_state VALUES ('preserved', '{\"value\":42}', 1)");
   for (let iteration = 0; iteration < 2; iteration += 1) {
-    closeOpenClawAgentDatabaseByPath(pathname);
+    closeAgent(pathname);
     const read = (database: typeof first) =>
       database.db
         .prepare("SELECT state_json FROM auth_profile_state WHERE state_key = ?")
         .get("preserved");
-    const row = await withOpenClawAgentDatabaseAdmission(
-      options,
-      (run) => Promise.resolve(run(() => {})),
-      read,
-    );
+    const row = await withAgentAdmission(options, (run) => Promise.resolve(run(() => {})), read);
     expect(row).toEqual({ state_json: '{"value":42}' });
   }
   expect(checks).toEqual(["PRAGMA integrity_check;", "PRAGMA foreign_key_check;"]);
   expect(worker).not.toHaveBeenCalled();
   expect(quickCheck).not.toHaveBeenCalled();
 
-  closeOpenClawAgentDatabasesForTest();
-  openOpenClawAgentDatabase(options);
+  closeAgents();
+  openAgent(options);
   expect(checks).toEqual(["PRAGMA integrity_check;", "PRAGMA foreign_key_check;"]);
 });
 
 it("refuses an orphan allocated page before admitting a dirty database", async () => {
   const expected = /never used/iu;
   const options = makeOptions("integrity-pages");
-  const pathname = openOpenClawAgentDatabase(options).path;
-  closeOpenClawAgentDatabasesForTest();
+  const pathname = openAgent(options).path;
+  closeAgents();
   invalidateOpenClawAgentDatabaseIntegrityBeforeMutation(pathname);
-  const database = sqlite.openNodeSqliteDatabase(pathname);
-  try {
+  {
+    using database = sqlite.openNodeSqliteDatabase(pathname);
     database.enableDefensive?.(false);
     database.exec(`
       CREATE TABLE page_owner_a (value INTEGER);
@@ -237,13 +231,11 @@ it("refuses an orphan allocated page before admitting a dirty database", async (
     expect(String(database.prepare("PRAGMA integrity_check").get()?.integrity_check)).toMatch(
       expected,
     );
-  } finally {
-    database.close();
   }
 
   const admitted = vi.fn();
   await expect(
-    withOpenClawAgentDatabaseAdmission(options, (run) => Promise.resolve(run(() => {})), admitted),
+    withAgentAdmission(options, (run) => Promise.resolve(run(() => {})), admitted),
   ).rejects.toMatchObject({
     name: "SqliteIntegrityError",
     message: expect.stringMatching(expected),
@@ -253,21 +245,21 @@ it("refuses an orphan allocated page before admitting a dirty database", async (
 
 it("does not lend remembered integrity to another file at the same path", () => {
   const options = makeOptions("integrity-cache");
-  const database = openOpenClawAgentDatabase(options);
-  closeOpenClawAgentDatabaseByPath(database.path);
+  const database = openAgent(options);
+  closeAgent(database.path);
   const replacement = `${database.path}.replacement`;
   fs.copyFileSync(database.path, replacement);
   createUnsafeIndexDrift(replacement);
   fs.renameSync(replacement, database.path);
-  expect(() => openOpenClawAgentDatabase(options)).toThrow(
+  expect(() => openAgent(options)).toThrow(
     /integrity_check failed.*missing from index unsafe_index_records_value/iu,
   );
 });
 
 it("rechecks the media version guard after a validated handle is replaced by a populated v0 store", () => {
   const options = makeOptions("worker-1");
-  const databasePath = openOpenClawAgentDatabase(options).path;
-  expect(closeOpenClawAgentDatabaseByPath(databasePath)).toBe(true);
+  const databasePath = openAgent(options).path;
+  expect(closeAgent(databasePath)).toBe(true);
 
   fs.copyFileSync(databasePath, `${databasePath}.replacement`);
   fs.renameSync(`${databasePath}.replacement`, databasePath);
@@ -282,9 +274,7 @@ it("rechecks the media version guard after a validated handle is replaced by a p
     downgraded.close();
   }
 
-  expect(() => openOpenClawAgentDatabase(options)).toThrow(
-    "run openclaw doctor --fix to migrate persisted media",
-  );
+  expect(() => openAgent(options)).toThrow("run openclaw doctor --fix to migrate persisted media");
 });
 
 it.each(["invalid seal", "foreign lease"] as const)(
@@ -292,17 +282,15 @@ it.each(["invalid seal", "foreign lease"] as const)(
   (change) => {
     const options = makeOptions("policy");
     const { env } = options;
-    const original = openOpenClawAgentDatabase(options);
+    const original = openAgent(options);
     original.db.exec("INSERT INTO auth_profile_state VALUES ('preserved', '{\"ok\":true}', 1)");
-    closeOpenClawAgentDatabaseByPath(original.path);
-    expect(readSqliteDatabaseCleanClose(original.path)).toBe(true);
+    closeAgent(original.path);
+    expect(isClean(original.path)).toBe(true);
     const lease =
-      change === "foreign lease"
-        ? claimOpenClawAgentDatabaseLease({ ...options, path: original.path })
-        : undefined;
+      change === "foreign lease" ? claimLease({ ...options, path: original.path }) : undefined;
     try {
       if (lease) {
-        openOpenClawStateDatabase({ env })
+        openState({ env })
           .db.prepare(
             "UPDATE agent_database_leases SET owner_pid = ?, owner_start_time = NULL WHERE lease_id = ?",
           )
@@ -323,7 +311,7 @@ it.each(["invalid seal", "foreign lease"] as const)(
         .spyOn(verifier, "requestOpenClawAgentDatabaseIntegrityCheck")
         .mockImplementation(() => {});
       logger.info.mockClear();
-      const reopened = openOpenClawAgentDatabase(options);
+      const reopened = openAgent(options);
       expect(
         reopened.db
           .prepare("SELECT state_json FROM auth_profile_state WHERE state_key='preserved'")
@@ -333,10 +321,10 @@ it.each(["invalid seal", "foreign lease"] as const)(
       expect(logger.info).not.toHaveBeenCalled();
       expect(queued).not.toHaveBeenCalled();
       reopened.db.exec("UPDATE auth_profile_state SET updated_at=2 WHERE state_key='preserved'");
-      expect(readSqliteDatabaseCleanClose(original.path)).toBe(false);
+      expect(isClean(original.path)).toBe(false);
     } finally {
       if (lease) {
-        releaseOpenClawAgentDatabaseLease(lease, { env }, "read-only");
+        releaseLease(lease, { env }, "read-only");
       }
     }
   },
@@ -352,12 +340,8 @@ it("adopts the released quarantine schema without changing its rows or version",
     // The quarantine schema shipped in v2026.9.5 has no integrity-receipt table.
     previous.exec(`
       CREATE TABLE quarantined_databases (
-        path TEXT NOT NULL PRIMARY KEY,
-        kind TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        quarantined_at INTEGER NOT NULL,
-        writer_app_version TEXT,
-        verified_generation TEXT
+        path TEXT NOT NULL PRIMARY KEY, kind TEXT NOT NULL, reason TEXT NOT NULL,
+        quarantined_at INTEGER NOT NULL, writer_app_version TEXT, verified_generation TEXT
       ) STRICT;
       PRAGMA user_version = 2;
     `);
@@ -366,8 +350,8 @@ it("adopts the released quarantine schema without changing its rows or version",
       .run(quarantinedPath, "agent", "retained quarantine", 1, "2026.9.5", null);
   }
 
-  const database = openOpenClawAgentDatabase({ agentId: "upgraded", env });
-  expect(readSqliteDatabaseCleanClose(database.path)).toBe(false);
+  const database = openAgent({ agentId: "upgraded", env });
+  expect(isClean(database.path)).toBe(false);
   using upgraded = sqlite.openNodeSqliteDatabase(storePath, { readOnly: true });
   expect(upgraded.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 });
   expect(upgraded.prepare("SELECT * FROM quarantined_databases").all()).toEqual([
@@ -384,9 +368,9 @@ it("adopts the released quarantine schema without changing its rows or version",
 
 it("refuses the first write when its clean-close seal cannot be removed", () => {
   const options = makeOptions("policy");
-  const agent = openOpenClawAgentDatabase(options);
-  closeOpenClawAgentDatabaseByPath(agent.path);
-  expect(readSqliteDatabaseCleanClose(agent.path)).toBe(true);
+  const agent = openAgent(options);
+  closeAgent(agent.path);
+  expect(isClean(agent.path)).toBe(true);
   const unlink = fs.unlinkSync;
   const failure = Object.assign(new Error("synthetic seal unlink failed"), { code: "EACCES" });
   const intercepted = vi.spyOn(fs, "unlinkSync").mockImplementation((pathname) => {
@@ -397,18 +381,18 @@ it("refuses the first write when its clean-close seal cannot be removed", () => 
   });
   try {
     expect(() => {
-      const reopened = openOpenClawAgentDatabase(options);
+      const reopened = openAgent(options);
       reopened.db.exec("INSERT INTO auth_profile_state VALUES ('must-not-write', '{}', 1)");
     }).toThrow(failure);
   } finally {
     intercepted.mockRestore();
   }
-  const reopened = openOpenClawAgentDatabase(options);
+  const reopened = openAgent(options);
   expect(
     reopened.db
       .prepare("SELECT state_key FROM auth_profile_state WHERE state_key='must-not-write'")
       .get(),
   ).toBeUndefined();
   reopened.db.exec("INSERT INTO auth_profile_state VALUES ('can-write', '{}', 1)");
-  expect(readSqliteDatabaseCleanClose(agent.path)).toBe(false);
+  expect(isClean(agent.path)).toBe(false);
 });
