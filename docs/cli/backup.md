@@ -434,6 +434,8 @@ backup creation does not scrub their history or remove them from later trees.
   Git history is durable. Without `--exclude-secrets`, snapshots include
   credential material and any pushed remote must be private.
 
+SQLite and PostgreSQL Git exports apply the same `--exclude-secrets` policy. PostgreSQL portable images retain empty table definitions so the matching provider can restore them; credential rows and catalog fields are removed before publication.
+
 `src/state/secret-state-tables.ts` is the source of truth for redaction. At this revision, `--exclude-secrets` omits these shared-state tables:
 
 - `audit_identity_keys`
