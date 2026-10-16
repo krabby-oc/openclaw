@@ -2,6 +2,12 @@ import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import { withTempWorkspace } from "@openclaw/fs-safe/temp";
+import {
+  createConfigReadError,
+  createInvalidConfigError,
+  formatInvalidConfigDetails,
+  isConfigReadFailure,
+} from "../config/io.invalid-config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveDatabaseEngineSelection } from "../infra/database-engine/config.js";
 import { withDatabaseEngineSelection } from "../infra/database-engine/context.js";
@@ -56,16 +62,26 @@ export async function runOfflineDatabaseBackup<T>(
     );
   }
   const { createConfigIO } = await import("../config/config.js");
-  const { config } = await createConfigIO({
-    observe: false,
-    pluginValidation: "core-only",
-  }).readConfigFileSnapshot();
   return runWithLocalStateOwner({
     method: "backup.create",
     params: {},
     target: sourcePath,
     onForeignOwner: "refuse",
-    runLocal: ({ assertCurrent }) => run({ config, assertCurrent }),
+    runLocal: async ({ assertCurrent }) => {
+      assertCurrent();
+      const snapshot = await createConfigIO({
+        observe: false,
+        pluginValidation: "core-only",
+      }).readConfigFileSnapshot();
+      assertCurrent();
+      if (!snapshot.valid) {
+        const details = formatInvalidConfigDetails(snapshot.issues);
+        throw isConfigReadFailure(snapshot)
+          ? createConfigReadError(snapshot, details)
+          : createInvalidConfigError(snapshot.path, details);
+      }
+      return run({ config: snapshot.config, assertCurrent });
+    },
   });
 }
 
