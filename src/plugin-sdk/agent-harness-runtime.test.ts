@@ -97,6 +97,12 @@ describe("agent harness runtime SDK facade", () => {
     expectTypeOf<
       Omit<AgentHarnessAttemptParamsV2, "onSettledTurn">
     >().toMatchTypeOf<AgentHarnessAttemptParamsV2>();
+    expectTypeOf<Omit<AgentHarnessAttemptParams, "hostCapabilities">>().toMatchTypeOf<
+      Parameters<NonNullable<AgentHarness["finalizeSettledTurn"]>>[0]["attempt"]
+    >();
+    expectTypeOf<Omit<AgentHarnessAttemptParamsV2, "hostCapabilities">>().toMatchTypeOf<
+      Parameters<NonNullable<AgentHarnessV2["finalizeSettledTurn"]>>[0]["attempt"]
+    >();
     expectTypeOf<
       Parameters<NonNullable<AgentHarnessAttemptParamsV2["onSettledTurn"]>>[0]
     >().not.toHaveProperty("contextEngineTerminalAnchor");

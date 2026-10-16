@@ -151,7 +151,6 @@ export type AgentHarnessSettledTurnFinalizationAttemptParams<
   TAttemptParams extends AgentHarnessAttemptParams = AgentHarnessAttemptParams,
 > = Omit<TAttemptParams, "hostCapabilities" | "onSettledTurn"> & {
   hostCapabilities?: never;
-  onSettledTurn?: never;
 };
 type AgentHarnessSettledTurnFinalizationParams<
   TAttemptParams extends AgentHarnessAttemptParams = AgentHarnessAttemptParams,

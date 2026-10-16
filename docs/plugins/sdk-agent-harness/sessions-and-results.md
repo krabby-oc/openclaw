@@ -341,6 +341,10 @@ detached context. Do not retain the function beyond the callback, put deferred
 work in `data`, or reuse released authority. Harnesses that omit this callback
 keep supplying context before returning their attempt, as before.
 
+Existing code that removes `hostCapabilities` from an attempt remains compatible
+with the finalization parameter type. Core removes `onSettledTurn` when preparing
+the isolated finalization parameters; it is not a finalization capability.
+
 Enforce projection limits while acquiring messages, rather than cloning the
 whole transcript before checking its size. Do not retain an open transcript
 reader in `data`. The finalizer must reject a missing,
