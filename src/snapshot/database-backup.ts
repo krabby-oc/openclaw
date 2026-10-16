@@ -88,6 +88,7 @@ export async function runOfflineDatabaseBackup<T>(
 export async function verifyMatchedPostgresBackup(
   directory: string,
   profile: PostgresExportEnvelope["profile"],
+  expectedSource?: { storeId: string; namespace: string },
 ) {
   if ((await fs.readdir(directory)).includes(".pending")) {
     throw new Error("PostgreSQL backup is incomplete.");
@@ -97,6 +98,13 @@ export async function verifyMatchedPostgresBackup(
     throw new Error("Expected a matched PostgreSQL export.");
   }
   await verifyPostgresExportEnvelope(directory, envelope.manifest, inspectHeldAnchor, profile);
+  if (
+    expectedSource &&
+    (envelope.manifest.source.storeId !== expectedSource.storeId ||
+      envelope.manifest.source.namespace !== expectedSource.namespace)
+  ) {
+    throw new Error("PostgreSQL backup belongs to a different store.");
+  }
   return envelope.manifest;
 }
 
@@ -207,14 +215,11 @@ async function preparePostgresRestoreInWorker(params: {
   preserveUpdateHistory?: boolean;
   assertCurrent: () => void;
 }) {
-  const manifest = await verifyMatchedPostgresBackup(params.directory, params.profile);
-  if (
-    params.expectedSource &&
-    (manifest.source.storeId !== params.expectedSource.storeId ||
-      manifest.source.namespace !== params.expectedSource.namespace)
-  ) {
-    throw new Error("PostgreSQL rollback capture belongs to a different store.");
-  }
+  const manifest = await verifyMatchedPostgresBackup(
+    params.directory,
+    params.profile,
+    params.expectedSource,
+  );
   return await withDatabasePortConnection(params.config, async (client) => {
     const { loadDatabasePortDescriptor } =
       await import("../infra/database-engine/port-provider-descriptor.js");
