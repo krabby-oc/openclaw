@@ -5,11 +5,14 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { Command } from "commander";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { withContendedConfigMutation } from "../../test/helpers/config-mutation-lock.js";
-import { readConfigFileSnapshot } from "../config/config.js";
+import * as config from "../config/config.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+import * as gateway from "../gateway/call.js";
 import type { HookStatusReport } from "../hooks/hooks-status.js";
+import { defaultRuntime } from "../runtime.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
-import { formatHookInfo, formatHooksCheck, formatHooksList } from "./hooks-cli.format.js";
 import { registerHooksCli } from "./hooks-cli.js";
+import * as oneShotExit from "./one-shot-exit.js";
 import { createEmptyInstallChecks } from "./requirements-test-fixtures.js";
 
 const runPluginInstallCommandMock = vi.hoisted(() => vi.fn());
@@ -55,6 +58,35 @@ beforeEach(() => {
   runPluginInstallCommandMock.mockReset();
   runPluginUpdateCommandMock.mockReset();
 });
+
+async function runHooksReport(statusReport: HookStatusReport, args: string[]): Promise<string> {
+  const fixtureConfig: OpenClawConfig = {
+    agents: {
+      ownership: "explicit",
+      entries: { fixture: { workspace: statusReport.workspaceDir } },
+      defaults: { systemAgent: { agentId: "fixture" } },
+    },
+  };
+  const output: string[] = [];
+  const reader = Object.assign(async () => fixtureConfig, { assertCurrent() {} });
+  const spies = [
+    vi.spyOn(config, "captureRuntimeConfigAsyncReader").mockReturnValue(reader),
+    vi.spyOn(gateway, "callGateway").mockResolvedValue(statusReport),
+    vi.spyOn(defaultRuntime, "log").mockImplementation((value) => output.push(String(value))),
+    vi.spyOn(defaultRuntime, "writeStdout").mockImplementation((value) => output.push(value)),
+    vi.spyOn(oneShotExit, "requestExitAfterOneShotOutput").mockReturnValue(true),
+  ];
+  try {
+    const program = new Command().exitOverride();
+    registerHooksCli(program);
+    await program.parseAsync(["hooks", ...args], { from: "user" });
+    return output.join("\n");
+  } finally {
+    for (const spy of spies) {
+      spy.mockRestore();
+    }
+  }
+}
 
 function createPluginManagedHookReport(): HookStatusReport {
   return {
@@ -115,15 +147,15 @@ function createMissingRequirementHookReport(): HookStatusReport {
 }
 
 describe("hooks cli formatting", () => {
-  it("shows eventless hooks as blocked by their event declaration in verbose list output", () => {
-    const output = formatHooksList(createEventlessHookReport(), { verbose: true });
+  it("shows eventless hooks as blocked by their event declaration in verbose list output", async () => {
+    const output = await runHooksReport(createEventlessHookReport(), ["list", "--verbose"]);
 
     expect(output).toContain("0/1 ready");
     expect(output).toContain("no events defined");
     expect(output).not.toContain("missing requirements");
   });
 
-  it("does not report disabled hook policy as a missing requirement", () => {
+  it("does not report disabled hook policy as a missing requirement", async () => {
     const disabledReport: HookStatusReport = {
       ...report,
       hooks: [
@@ -135,40 +167,41 @@ describe("hooks cli formatting", () => {
         },
       ],
     };
-    const output = formatHooksList(disabledReport, { verbose: true });
+    const output = await runHooksReport(disabledReport, ["list", "--verbose"]);
     expect(output).toContain("disabled");
     expect(output).not.toContain("workspace hook");
   });
 
-  it("shows eventless hooks as blocked by their event declaration in info output", () => {
-    const output = formatHookInfo(createEventlessHookReport().hooks[0], "session-memory", {});
+  it("shows eventless hooks as blocked by their event declaration in info output", async () => {
+    const output = await runHooksReport(createEventlessHookReport(), ["info", "session-memory"]);
 
     expect(output).toContain("No events defined");
     expect(output).toContain("Blocked reason: no events defined");
     expect(output).not.toContain("Missing requirements");
   });
 
-  it("keeps missing requirement hooks labeled as missing requirements in info output", () => {
-    const output = formatHookInfo(
-      createMissingRequirementHookReport().hooks[0],
+  it("keeps missing requirement hooks labeled as missing requirements in info output", async () => {
+    const output = await runHooksReport(createMissingRequirementHookReport(), [
+      "info",
       "session-memory",
-      {},
-    );
+    ]);
 
     expect(output).toContain("Missing requirements");
     expect(output).toContain("DEMO_HOOK_TOKEN");
   });
 
-  it("classifies eventless hooks as not ready in human check output", () => {
-    const output = formatHooksCheck(createEventlessHookReport(), {});
+  it("classifies eventless hooks as not ready in human check output", async () => {
+    const output = await runHooksReport(createEventlessHookReport(), ["check"]);
 
     expect(output).toContain("Ready: 0");
     expect(output).toContain("Not ready: 1");
     expect(output).toContain("session-memory - no events defined");
   });
 
-  it("classifies eventless hooks as not eligible in JSON check output", () => {
-    const output = JSON.parse(formatHooksCheck(createEventlessHookReport(), { json: true }));
+  it("classifies eventless hooks as not eligible in JSON check output", async () => {
+    const output = JSON.parse(
+      await runHooksReport(createEventlessHookReport(), ["check", "--json"]),
+    );
 
     expect(output).toMatchObject({
       total: 1,
@@ -186,14 +219,14 @@ describe("hooks cli formatting", () => {
     });
   });
 
-  it("labels plugin-managed hooks with plugin id", () => {
+  it("labels plugin-managed hooks with plugin id", async () => {
     const pluginReport = createPluginManagedHookReport();
 
-    const output = formatHooksList(pluginReport, {});
+    const output = await runHooksReport(pluginReport, ["list"]);
     expect(output).toContain("plugin:voice-call");
   });
 
-  it("warns about unknown events in hook info", () => {
+  it("warns about unknown events in hook info", async () => {
     const typoReport: HookStatusReport = {
       workspaceDir: "/tmp/workspace",
       managedHooksDir: "/tmp/hooks",
@@ -207,7 +240,7 @@ describe("hooks cli formatting", () => {
       ],
     };
 
-    const output = formatHookInfo(typoReport.hooks[0], "typo-hook", {});
+    const output = await runHooksReport(typoReport, ["info", "typo-hook"]);
     expect(output).toContain("Event not emitted by core (likely typo): command:nwe");
   });
 
@@ -296,7 +329,7 @@ describe("hooks config write ownership", () => {
           messages: { responsePrefix: "${OPENCLAW_TEST_HOOK_PREFIX}" },
           hooks: { internal: { entries: { "fixture-hook": { enabled: false } } } },
         });
-        const fresh = await readConfigFileSnapshot();
+        const fresh = await config.readConfigFileSnapshot();
         expect(fresh.valid).toBe(true);
         expect(fresh.sourceConfig.messages?.responsePrefix).toBe("after-lock");
       },
