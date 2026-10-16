@@ -7,6 +7,8 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveAgentRoute } from "./resolve-route.js";
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId, normalizeAgentId } from "./session-key.js";
 
+// Agent-to-channel coverage summary for diagnostics and background checks. It
+// samples configured channels/accounts and explicit bindings.
 type ChannelRouteTarget = {
   agentId: string;
   channels: string[];

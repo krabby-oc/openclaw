@@ -1,3 +1,4 @@
+/** Normalizes durable plugin install records into installed-index metadata and back. */
 import {
   createPluginInstallRecordMap,
   parsePluginInstallRecordMap,
@@ -10,6 +11,7 @@ import type {
   InstalledPluginInstallRecordInfo,
 } from "./installed-plugin-index-types.js";
 
+/** Normalizes raw plugin install records into index-safe install record metadata. */
 export function normalizeInstallRecordMap(
   records: Record<string, PluginInstallRecord> | undefined,
 ): Record<string, InstalledPluginInstallRecordInfo> {

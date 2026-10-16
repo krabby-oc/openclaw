@@ -22,6 +22,7 @@ function createRegistrationPlan(mode: PluginRegistrationMode) {
   };
 }
 
+/** Converts loader intent into explicit entrypoint and activation behavior. */
 export function resolvePluginRegistrationPlan(params: {
   canLoadScopedSetupOnlyChannelPlugin: boolean;
   enableStateEnabled: boolean;

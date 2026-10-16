@@ -1,4 +1,5 @@
 import { expectDefined } from "@openclaw/normalization-core";
+// Shares direct-message policy normalization for channel audits.
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 import { resolveChannelIngressEffectiveAllowFromLists as resolveEffectiveAllowFromLists } from "../channels/message-access/effective-allow-from.js";
 import type { GroupPolicy } from "../config/types.base.js";

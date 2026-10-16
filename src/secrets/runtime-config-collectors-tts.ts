@@ -1,3 +1,4 @@
+/** Collects text-to-speech secret refs from runtime config. */
 import { appendConfigPathSegment } from "../shared/dot-path.js";
 import {
   createConfigSecretInputCollector,

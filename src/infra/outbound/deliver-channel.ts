@@ -1,3 +1,4 @@
+// Resolves outbound channel adapters and executes their send lifecycle.
 import type {
   ChannelMessageAdapterShape,
   ChannelMessageSendAttemptContext,

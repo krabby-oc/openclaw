@@ -1,3 +1,4 @@
+// Memory status collection for status scans.
 // Runtime memory dependencies stay lazy so status paths without memory avoid loading the search manager.
 
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";

@@ -1,3 +1,4 @@
+// ClawHub discovery and exact-artifact resolution for official Claws.
 import fs from "node:fs/promises";
 import { flattenMarkdownToPlainText } from "@openclaw/normalization-core/markdown-plain-text";
 import { isRecord as isJsonObject } from "@openclaw/normalization-core/record-coerce";

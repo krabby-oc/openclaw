@@ -1,3 +1,4 @@
+// Resolves Windows process identity and listening-port ownership.
 import { spawnSync } from "node:child_process";
 import { parseStrictPositiveInteger } from "@openclaw/normalization-core/number-coercion";
 import { parseWindowsNativeCommandLine } from "../process/windows-command-line.js";
@@ -21,6 +22,8 @@ export type WindowsListeningPidsResult =
 export type WindowsProcessArgsResult =
   | { ok: true; args: string[] | null }
   | { ok: false; permanent: boolean };
+
+// Windows listening-PID discovery (PowerShell → netstat fallback)
 
 function readListeningPidsViaPowerShell(port: number, timeoutMs: number): number[] | null {
   const ps = spawnSync(
@@ -115,6 +118,8 @@ export function readWindowsPortUsageSync(port: number, timeoutMs: number): PortU
   const count = result.stdout.trim();
   return /^\d+$/.test(count) ? (Number(count) === 0 ? "free" : "busy") : "unknown";
 }
+
+// Windows process identity reading (PowerShell → WMIC fallback)
 
 function extractWindowsCommandLine(raw: Buffer | string): string | null {
   const output = decodeWindowsProcessOutput(raw).trim();

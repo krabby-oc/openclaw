@@ -1,3 +1,4 @@
+/** Command detectors used by inbound authorization and control-command routing. */
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,

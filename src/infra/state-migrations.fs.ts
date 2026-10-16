@@ -1,3 +1,4 @@
+// Filesystem primitives used by legacy state migration code.
 import fs from "node:fs";
 import { safeStatSync } from "@openclaw/fs-safe/path";
 import { parseJsonWithJson5Fallback } from "../utils/parse-json-compat.js";

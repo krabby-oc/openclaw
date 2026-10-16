@@ -1,3 +1,4 @@
+// Config reads and diagnostic projection for Gateway service status.
 import fs from "node:fs/promises";
 import { asNonArrayRecord } from "@openclaw/normalization-core/record-coerce";
 import JSON5 from "json5";

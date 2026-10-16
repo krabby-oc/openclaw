@@ -9,6 +9,7 @@ import type { NpmSpecResolution } from "../infra/install-source-utils.js";
 import { parseRegistryNpmSpec } from "../infra/npm-registry-spec.js";
 import { resolveUserPath } from "../utils.js";
 
+/** Plugin install record update with the target plugin id attached. */
 export type PluginInstallUpdate = PluginInstallRecord & { pluginId: string };
 
 export { buildNpmResolutionFields as buildNpmResolutionInstallFields } from "../infra/install-source-utils.js";

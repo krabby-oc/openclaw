@@ -1,3 +1,4 @@
+// OpenClaw chat engine: stable transport-agnostic facade over turn and wizard owners.
 import type {
   SystemAgentWizardCancel,
   WizardAnswer,

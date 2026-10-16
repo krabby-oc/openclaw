@@ -1,3 +1,4 @@
+// Resolves sanitized command/preview text for exec approval prompts.
 import { sanitizeExecApprovalDisplayText } from "./exec-approval-text-sanitize.js";
 import type { ExecApprovalRequestPayload } from "./exec-approvals.js";
 

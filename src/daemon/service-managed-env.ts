@@ -1,3 +1,4 @@
+/** Tracks managed service environment keys across reinstall and repair flows. */
 import { sortUniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { normalizeEnvVarKey } from "../infra/host-env-security.js";
 import { detectRespawnSupervisor } from "../infra/supervisor-markers.js";

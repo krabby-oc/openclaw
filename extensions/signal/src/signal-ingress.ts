@@ -192,6 +192,7 @@ export async function startSignalIngressMonitor(params: {
       parsedPayload ? params.dispatch(event, lifecycle, parsedPayload) : undefined,
     pollIntervalMs: SIGNAL_INGRESS_DRAIN_INTERVAL_MS,
     retention: {
+      // Signal previously pruned before every enqueue rather than on a timed cadence.
       pruneIntervalMs: 0,
       completedMaxEntries: 2_000,
       failedMaxEntries: 1_000,

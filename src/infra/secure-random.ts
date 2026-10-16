@@ -1,3 +1,4 @@
+// Provides secure random ids and bounded random numbers.
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import { registerSecretValueForRedaction } from "../logging/secret-redaction-registry.js";
 

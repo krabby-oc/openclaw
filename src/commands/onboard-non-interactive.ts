@@ -128,6 +128,7 @@ async function runNonInteractiveSetupExclusive(opts: OnboardOptions, runtime: Ru
   });
 }
 
+/** Runs non-interactive onboarding in local, remote, or migration-import mode. */
 export async function runNonInteractiveSetup(
   opts: OnboardOptions,
   runtime: RuntimeEnv = defaultRuntime,

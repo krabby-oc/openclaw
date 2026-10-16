@@ -1,3 +1,4 @@
+// Creates backup archives while filtering volatile runtime state.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

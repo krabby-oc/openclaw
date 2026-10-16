@@ -19,6 +19,7 @@ export function resolveCompatRegistryVersion(): string {
   );
 }
 
+/** Hashes config policy inputs that can change installed plugin activation. */
 export function resolveInstalledPluginIndexPolicyHash(
   config: OpenClawConfig | undefined,
   // Callers scoped to an explicit env hash that env's state-root mode so

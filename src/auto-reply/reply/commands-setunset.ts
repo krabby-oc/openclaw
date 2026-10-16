@@ -1,3 +1,4 @@
+/** Shared parsing helpers for commands with set/unset subcommands. */
 import { parseSlashCommandOrNull } from "./commands-slash-parse.js";
 import { parseConfigValue } from "./config-value.js";
 

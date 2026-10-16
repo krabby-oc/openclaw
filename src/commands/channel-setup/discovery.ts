@@ -16,6 +16,7 @@ import {
   listTrustedChannelPluginCatalogEntries,
 } from "./trusted-catalog.js";
 
+/** Return true when channel metadata should appear in setup/onboarding choices. */
 export function shouldShowChannelInSetup(meta: Pick<ChannelMeta, "exposure">): boolean {
   return isChannelVisibleInSetup(meta);
 }
@@ -24,6 +25,7 @@ function resolveWorkspaceDir(cfg: OpenClawConfig, workspaceDir?: string): string
   return workspaceDir ?? resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg));
 }
 
+/** List channel ids contributed by currently installed manifest-backed plugins. */
 export function listManifestInstalledChannelIds(params: {
   cfg: OpenClawConfig;
   workspaceDir?: string;

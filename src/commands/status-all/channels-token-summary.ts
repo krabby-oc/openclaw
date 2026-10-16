@@ -1,3 +1,4 @@
+// Summarizes channel token/account credential fields for `openclaw status --all`.
 // The display path is intentionally secret-safe unless the caller explicitly requests disclosure.
 
 import { sha256HexPrefixCore } from "@openclaw/normalization-core/node-crypto";

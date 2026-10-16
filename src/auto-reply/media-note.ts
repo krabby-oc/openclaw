@@ -1,3 +1,4 @@
+/** Builds compact prompt notes for inbound media attachments. */
 import path from "node:path";
 import { basenameFromAnyPath } from "@openclaw/media-core/file-name";
 import { isAudioFileName } from "@openclaw/media-core/mime";

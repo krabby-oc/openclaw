@@ -1,3 +1,4 @@
+/** Audits effective systemd service settings and managed unit backups. */
 import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";

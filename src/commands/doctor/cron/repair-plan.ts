@@ -1,3 +1,4 @@
+// Cron doctor repair planning helpers for previewing and merging legacy rows.
 import { countLabel as pluralize } from "../../doctor-state-integrity-format.js";
 import {
   IMAGE_INSPECTION_TOOL_NAME_MIGRATION,

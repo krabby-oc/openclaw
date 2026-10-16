@@ -1,3 +1,6 @@
+// Formatting helpers for status tokens, prompt-cache stats, and daemon runtime snippets.
+// These helpers are shared by report rows and command output surfaces.
+
 import {
   asNonNegativeFiniteNumber,
   asPositiveFiniteNumber,

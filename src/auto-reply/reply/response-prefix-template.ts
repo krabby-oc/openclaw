@@ -1,3 +1,5 @@
+// Resolves response-prefix templates for channel and sender scoped replies.
+
 export type ResponsePrefixContext = {
   /** Short model name (e.g., "gpt-5.4", "claude-opus-4-6") */
   model?: string;

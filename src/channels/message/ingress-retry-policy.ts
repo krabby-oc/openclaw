@@ -1,4 +1,6 @@
 /**
+ * Generic ingress retry backoff and dead-letter decisions.
+ *
  * Channel-specific non-retryable classification stays out of core; pass it in.
  */
 import {

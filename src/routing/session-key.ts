@@ -3,6 +3,7 @@ import {
   normalizeAgentId,
   normalizeAgentIdStrict,
 } from "@openclaw/normalization-core/agent-id";
+// Routing session key helpers build stable session keys from route targets.
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,

@@ -1,6 +1,8 @@
+// Resolves when reply runs should emit typing indicators.
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import type { TypingPolicy } from "../types.js";
 
+/** Inputs used to resolve typing behavior for one reply run. */
 type ResolveRunTypingPolicyParams = {
   requestedPolicy?: TypingPolicy;
   suppressTyping?: boolean;
@@ -9,6 +11,7 @@ type ResolveRunTypingPolicyParams = {
   systemEvent?: boolean;
 };
 
+/** Effective typing policy plus suppression flag for a reply run. */
 type ResolvedRunTypingPolicy = {
   typingPolicy: TypingPolicy;
   suppressTyping: boolean;

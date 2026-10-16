@@ -1,3 +1,4 @@
+// Doctor-only runtime policy repair for migrated cron Codex model refs.
 import { asOptionalRecord, isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalAgentRuntimeId } from "../../../agents/agent-runtime-id.js";
 import { tryResolveAmbientOwnerAgentId } from "../../../agents/agent-scope-config.js";

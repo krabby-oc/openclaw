@@ -1,3 +1,4 @@
+// Builds the stable JSON payload for `openclaw status --json`.
 // Optional deep fields are included only when their upstream probes actually ran.
 
 import type { BestEffortConfigSnapshot } from "../config/io.js";
@@ -7,6 +8,7 @@ import {
 } from "./status-all/format.js";
 import type { StatusOverviewSurface } from "./status-overview-surface.ts";
 
+/** Combines scan summary, overview surface, services, agents, diagnostics, and optional deep probes. */
 export function buildStatusJsonPayload(params: {
   summary: Record<string, unknown>;
   surface: StatusOverviewSurface;

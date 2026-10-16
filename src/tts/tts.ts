@@ -1,3 +1,4 @@
+/** Public TTS runtime barrel exposed to core callers and plugin SDK facades. */
 import { assertSecretOwnerAvailable } from "../secrets/runtime-degraded-state.js";
 import {
   setSpeechRuntimeAvailabilityGuard,

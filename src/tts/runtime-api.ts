@@ -1,3 +1,5 @@
+// Runtime speech API barrel for TTS preferences, synthesis, streaming, and test
+// helpers used by speech-capable plugins.
 import type { TtsProvider } from "../config/types.js";
 import { warnPluginSdkDeprecation } from "../plugins/sdk-deprecation.js";
 import { parseTtsDirectives } from "./directives.js";

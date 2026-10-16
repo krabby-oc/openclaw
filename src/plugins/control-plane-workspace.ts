@@ -1,3 +1,4 @@
+/** Resolves the optional agent workspace enrichment used by plugin control-plane inventory. */
 import {
   resolveAgentWorkspaceDir,
   tryResolveAmbientOwnerAgentId,

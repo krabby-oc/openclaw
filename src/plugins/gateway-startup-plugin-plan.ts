@@ -1,3 +1,4 @@
+// Plans deterministic Gateway startup plugin activation from prepared registry metadata.
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { getConfiguredDecisionProviderIds } from "../agents/decision-model-setting.js";
 import { collectConfiguredAgentHarnessRuntimes } from "../agents/harness-runtimes.js";

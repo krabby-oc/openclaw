@@ -1,3 +1,5 @@
+// Internal SQLite persistence for channel pairing requests and allow entries.
+
 import { parseDateStringTimestampMs } from "@openclaw/normalization-core/number-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";

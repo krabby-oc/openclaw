@@ -1,8 +1,10 @@
+/** Compatibility helper that auto-enables bundled plugins for legacy flows. */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginEntryConfig } from "../config/types.plugins.js";
 import { readBundledDiscoveryModeMemoized } from "./bundled-discovery-state.js";
 import { normalizePluginId } from "./config-state.js";
 
+/** Returns config with selected bundled plugins explicitly enabled when compat rules require it. */
 export function withBundledPluginEnablementCompat(params: {
   config: OpenClawConfig | undefined;
   pluginIds: readonly string[];

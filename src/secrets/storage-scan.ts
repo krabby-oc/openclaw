@@ -1,3 +1,4 @@
+/** Filesystem discovery for local secret storage audits. */
 import fs from "node:fs";
 import path from "node:path";
 import { listAgentIds, resolveAgentDir } from "../agents/agent-scope.js";

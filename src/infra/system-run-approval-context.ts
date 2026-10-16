@@ -9,6 +9,7 @@ import { normalizeSystemRunApprovalPlan } from "./system-run-approval-plan.js";
 import { resolveSystemRunCommandRequest } from "./system-run-command.js";
 import { normalizeNonEmptyString, normalizeStringArray } from "./system-run-normalize.js";
 
+// System-run approval context normalizes prepared node-run payloads before exec policy.
 export type PreparedRunExecPolicy = {
   security: ExecSecurity;
   ask: ExecAsk;

@@ -1,3 +1,4 @@
+// Proxy capture runtime coordinates capture sessions, proxy startup, and storage.
 import { isUtf8 } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { URL } from "node:url";

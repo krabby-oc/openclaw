@@ -1,3 +1,4 @@
+/** Stable public facade for plugin loading and runtime-registry resolution. */
 import { loadOpenClawPlugins } from "./loader-runtime-load.js";
 import type { PluginLoadOptions } from "./loader-types.js";
 export { resolveCompatibleRuntimePluginRegistry } from "./active-runtime-registry.js";

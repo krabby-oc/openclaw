@@ -1,3 +1,4 @@
+/** Shared helpers for onboarding, reset, gateway checks, and wizard output. */
 import fs from "node:fs/promises";
 import path from "node:path";
 import { inspect } from "node:util";
@@ -34,6 +35,7 @@ export { detectBrowserOpenSupport } from "../infra/browser-open.js";
 export { detectBinary } from "../infra/detect-binary.js";
 export { randomToken } from "./random-token.js";
 
+/** Handles Clack cancellation by exiting through the runtime. */
 export function guardCancel<T>(
   value: T | typeof CANCEL_SYMBOL,
   runtime: RuntimeEnv,
@@ -125,6 +127,7 @@ export function normalizeGatewayTokenInput(value: unknown): string {
   return trimmed;
 }
 
+/** Validates gateway password prompt input. */
 export function validateGatewayPasswordInput(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return "Required";
@@ -139,6 +142,7 @@ export function validateGatewayPasswordInput(value: unknown): string | undefined
   return undefined;
 }
 
+/** Prints the onboarding banner: pixel mascot beside the OPENCLAW wordmark. */
 export async function printWizardHeader(runtime: RuntimeEnv): Promise<void> {
   await printClawBanner(runtime);
 }
@@ -163,6 +167,7 @@ export function applyWizardMetadata(
   };
 }
 
+/** Formats the no-GUI SSH tunnel hint for opening the Control UI remotely. */
 export function formatControlUiSshHint(params: {
   port: number;
   basePath?: string;
@@ -227,6 +232,7 @@ async function assertFullResetPreservesOnboardingLock(workspaceDir: string): Pro
   }
 }
 
+/** Deletes onboarding-managed state according to the selected reset scope. */
 export async function handleReset(scope: ResetScope, workspaceDir: string, runtime: RuntimeEnv) {
   if (scope === "full") {
     // Validate before moving config or credentials so an unsafe full reset has
@@ -376,6 +382,7 @@ export async function probeGatewayConfiguredModel(
   }
 }
 
+/** Polls gateway reachability until success or deadline. */
 export async function waitForGatewayReachable(
   params: Omit<OnboardingGatewayProbeParams, "timeoutMs"> & {
     /** Total time to wait before giving up. */

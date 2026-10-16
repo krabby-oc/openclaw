@@ -1,3 +1,4 @@
+// QA Lab Matrix prompt builders keep scenario instructions deterministic.
 import { randomUUID } from "node:crypto";
 
 export function buildMentionPrompt(sutUserId: string, token: string) {

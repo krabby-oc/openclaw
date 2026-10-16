@@ -1,6 +1,11 @@
+// Conversation id helpers derive stable outbound conversation keys from
+// explicit thread ids or safe channel/group target shapes.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { stringifyRouteThreadId } from "../../plugin-sdk/channel-route.js";
 
+/**
+ * Chooses the best conversation id from an explicit thread id or outbound targets.
+ */
 export function resolveConversationIdFromTargets(params: {
   threadId?: string | number;
   targets: Array<string | undefined | null>;

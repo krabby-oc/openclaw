@@ -254,7 +254,9 @@ function extractLogBindingPrefix(numericArgs: unknown[]): {
           args: numericArgs.slice(1),
         };
       }
-    } catch {}
+    } catch {
+      // ignore malformed json bindings
+    }
   }
   return { args: numericArgs };
 }
@@ -651,6 +653,7 @@ export async function flushLogger(): Promise<void> {
   await fileLogTransport.flush();
 }
 
+// Test helpers
 export function setLoggerOverride(settings: LoggerSettings | null) {
   loggingState.overrideSettings = settings;
   invalidateLoggerSettings();
@@ -686,7 +689,11 @@ function pruneOldRollingLogs(dir: string): void {
         if (stat.mtimeMs < cutoff) {
           fs.rmSync(fullPath, { force: true });
         }
-      } catch {}
+      } catch {
+        // ignore errors during pruning
+      }
     }
-  } catch {}
+  } catch {
+    // ignore missing dir or read errors
+  }
 }

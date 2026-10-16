@@ -40,6 +40,7 @@ export const VERSION_BOUND_RUNTIME_PLUGIN_POLICY_IDS_BY_SURFACE = {
   entries: VERSION_BOUND_RUNTIME_PLUGIN_IDS,
 } as const;
 
+/** Resolve the official install candidate for a configured runtime id. */
 export function resolveConfiguredRuntimePluginInstallCandidate(
   runtimeId: string,
 ): ConfiguredRuntimePluginInstallCandidate | undefined {

@@ -1,3 +1,4 @@
+/** Explicit doctor maintenance for the canonical shared state SQLite database. */
 import fs from "node:fs";
 import { resolveSqliteDatabaseFilePaths } from "../infra/sqlite-files.js";
 import { clearOpenClawDatabaseQuarantine } from "../state/openclaw-quarantine-store.js";

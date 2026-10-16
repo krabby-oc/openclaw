@@ -1,3 +1,4 @@
+// One-time QQBot migrations for the Tencent 2.0 external plugin boundary.
 import {
   normalizeUniqueStringEntries,
   uniqueStrings,

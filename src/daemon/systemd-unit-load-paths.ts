@@ -1,3 +1,4 @@
+/** Paths systemd can load user and system units from. */
 import path from "node:path";
 
 export const DEFAULT_SYSTEMD_SYSTEM_UNIT_DIRS = [

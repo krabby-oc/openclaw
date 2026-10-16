@@ -28,6 +28,7 @@ type EmbeddingProviderSetupInspectionResult =
   | Awaited<ReturnType<InspectEmbeddingProviderSetup>>
   | undefined;
 
+// Bridges bundled plugin doctor checks into the core health registry.
 type BundledHealthApi = {
   probeCodexWorkspaceWriteSandbox?: (params: {
     cfg: OpenClawConfig;

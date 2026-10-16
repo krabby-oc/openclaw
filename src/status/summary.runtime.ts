@@ -1,3 +1,4 @@
+// Runtime helpers for building status summaries.
 // Kept behind a lazy surface because status summary imports model/session/runtime metadata helpers.
 
 import {

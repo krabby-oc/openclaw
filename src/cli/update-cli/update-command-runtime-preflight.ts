@@ -1,3 +1,4 @@
+// Target runtime admission, executable identity, and compatible-runtime recovery guidance.
 import path from "node:path";
 import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";

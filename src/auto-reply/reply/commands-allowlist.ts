@@ -1,4 +1,5 @@
 import { expectDefined } from "@openclaw/normalization-core";
+/** Handles /allowlist commands across config and pairing-store targets. */
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,

@@ -1,3 +1,4 @@
+/** Classifies systemd/systemctl unavailable errors into user-facing categories. */
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { getServiceInspectionClock } from "./service-inspection-budget.js";
 import type { ServiceInspectionReason } from "./service-inspection-error.js";

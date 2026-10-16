@@ -1,3 +1,5 @@
+// Defines the per-model provider compatibility schema fragment and its
+// OpenRouter/Vercel AI Gateway routing sub-schemas.
 import { z } from "zod";
 import type { OpenRouterRouting, VercelGatewayRouting } from "../llm/types.js";
 import { MODEL_THINKING_FORMATS } from "./model-config-vocabulary.js";

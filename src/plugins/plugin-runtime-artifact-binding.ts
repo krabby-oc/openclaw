@@ -2,6 +2,7 @@ import path from "node:path";
 import { resolveOpenClawPackageRootSync } from "../infra/openclaw-root.js";
 import { isPathInside } from "../infra/path-guards.js";
 import type { PluginRuntimeRecovery } from "./loader-types.js";
+/** Binds selected artifacts and completed registration to their loaded runtime record. */
 import type { OpenClawPackageManifest } from "./manifest.js";
 import { pluginCacheRealpathSync } from "./plugin-cache-files.js";
 import { getPluginInstance } from "./plugin-instance-scope.js";

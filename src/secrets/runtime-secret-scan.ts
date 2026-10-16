@@ -1,3 +1,4 @@
+/** Scans config-like values for SecretRefs and credential-looking fields. */
 import { isLegacySecretRefWithoutProvider, parseSecretRef } from "../config/types.secrets.js";
 import type { SecretDefaults } from "./runtime-shared.js";
 

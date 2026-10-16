@@ -1,3 +1,4 @@
+// Bounded read of the global MCP registry for security audit.
 import fs from "node:fs/promises";
 import path from "node:path";
 import { hasErrnoCode } from "../infra/errno.js";

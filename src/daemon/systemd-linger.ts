@@ -1,3 +1,4 @@
+/** Reads and enables systemd user linger for headless daemon sessions. */
 import os from "node:os";
 import {
   normalizeOptionalLowercaseString,

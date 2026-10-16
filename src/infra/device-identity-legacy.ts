@@ -1,3 +1,4 @@
+// Canonicalizes retired Node and Swift identity payloads for Doctor import.
 import { createHash } from "node:crypto";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {

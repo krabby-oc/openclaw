@@ -86,7 +86,9 @@ function resolveSelfEntryPath(): string | null {
     if (fs.existsSync(candidate)) {
       return candidate;
     }
-  } catch {}
+  } catch {
+    // ignore
+  }
 
   const argv1 = normalizeOptionalString(process.argv[1]);
   if (argv1) {

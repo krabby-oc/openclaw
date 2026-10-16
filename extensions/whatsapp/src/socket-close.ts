@@ -1,3 +1,4 @@
+// Whatsapp socket shutdown confirms the underlying Baileys transport is closed.
 import type { WASocket } from "baileys";
 import { withTimeout } from "openclaw/plugin-sdk/time-runtime";
 

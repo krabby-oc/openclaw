@@ -1,4 +1,6 @@
 /**
+ * Process-private realtime provider hooks for bundled implementations.
+ *
  * The symbol keeps browser-only lifecycle and context handling out of the
  * public Plugin SDK. External providers continue to implement only the stable
  * RealtimeVoiceProviderPlugin contract.

@@ -14,6 +14,7 @@ import {
   prepareSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
 } from "./kysely-sync.js";
+// Database-bound delivery queue serialization and mutations used by shared transactions.
 import type { EngineConnection } from "./sql-connection.js";
 import { publishSqliteDatabaseAdmission } from "./sqlite-database-admission.js";
 import { coerceRequiredSqliteNumber as sqliteNumber } from "./sqlite-number.js";

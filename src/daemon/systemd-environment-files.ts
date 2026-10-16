@@ -1,3 +1,4 @@
+/** Native systemd environment-file serialization, reading, and effective file overlays. */
 import fs from "node:fs/promises";
 import { parseSystemdEnvironmentFileLine } from "./systemd-environment-file-parser.js";
 import { expandSystemdEnvironmentFilePattern } from "./systemd-environment-file-pattern.js";

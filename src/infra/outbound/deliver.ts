@@ -1,3 +1,4 @@
+// Public facade for outbound delivery planning, queueing, and transport.
 export type { OutboundDeliveryResult } from "./deliver-types.js";
 export type { NormalizedOutboundPayload } from "./payloads.js";
 export type { OutboundSendDeps } from "./send-deps.js";

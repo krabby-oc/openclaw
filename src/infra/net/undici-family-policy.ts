@@ -16,6 +16,7 @@ export function resolveUndiciAutoSelectFamily(): boolean | undefined {
   return systemDefault;
 }
 
+/** Converts an autoSelectFamily decision into the undici connect option shape. */
 export function createUndiciAutoSelectFamilyConnectOptions(
   autoSelectFamily: boolean | undefined,
 ): { autoSelectFamily: boolean; autoSelectFamilyAttemptTimeout: number } | undefined {
@@ -28,6 +29,7 @@ export function createUndiciAutoSelectFamilyConnectOptions(
   };
 }
 
+/** Returns shared undici connect options for dispatchers that do not override them. */
 export function resolveUndiciAutoSelectFamilyConnectOptions():
   | { autoSelectFamily: boolean; autoSelectFamilyAttemptTimeout: number }
   | undefined {

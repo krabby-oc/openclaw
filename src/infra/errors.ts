@@ -1,3 +1,4 @@
+// Normalizes error objects for codes, names, messages, and redacted logs.
 import {
   extractErrorCode,
   formatErrorMessage as formatSharedErrorMessage,

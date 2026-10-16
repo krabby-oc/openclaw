@@ -1,3 +1,4 @@
+/** Collects core config secret refs during runtime preparation. */
 import {
   findNormalizedProviderKey,
   normalizeProviderId,

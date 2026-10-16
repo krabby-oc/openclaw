@@ -1,3 +1,4 @@
+/** SQLite-backed ACP session metadata storage keyed through session-store entries. */
 import type { SessionAcpMeta } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { warnPluginSdkDeprecation } from "../../plugins/sdk-deprecation.js";

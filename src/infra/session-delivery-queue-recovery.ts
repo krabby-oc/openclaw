@@ -1,3 +1,4 @@
+// Recovers queued session deliveries after process crashes.
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
 import {
   createDeliveryRecoveryCoordinator,

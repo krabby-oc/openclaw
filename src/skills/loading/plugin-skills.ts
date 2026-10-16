@@ -408,5 +408,7 @@ function removeGeneratedPluginSkillEntry(linkPath: string): void {
   }
   try {
     fs.rmSync(linkPath, { recursive: true, force: true });
-  } catch {}
+  } catch {
+    // best-effort cleanup
+  }
 }

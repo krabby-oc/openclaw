@@ -15,6 +15,7 @@ export {
 
 const GROUP_SESSION_MARKERS = [":group:", ":channel:"];
 
+/** Returns true when a session key is known to represent a thread. */
 function isThreadSessionKey(sessionKey?: string | null): boolean {
   return Boolean(resolveLoadedSessionThreadInfo(sessionKey).threadId);
 }

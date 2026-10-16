@@ -1,3 +1,4 @@
+// Trajectory runtime records bounded session events into SQLite-backed storage.
 import { hash } from "node:crypto";
 import { isProxy } from "node:util/types";
 import { projectDiagnosticValue, type DiagnosticProjectionPolicy } from "@openclaw/ai/diagnostics";

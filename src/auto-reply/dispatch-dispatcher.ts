@@ -1,3 +1,4 @@
+// Reply dispatcher lifecycle helpers used by auto-reply dispatch paths.
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import type { ReplyDispatchReceipt, ReplyDispatcher } from "./reply/reply-dispatcher.types.js";
 

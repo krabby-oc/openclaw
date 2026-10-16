@@ -6,6 +6,7 @@ export type {
   SkillInstallSpecMetadata,
 } from "./install-security-scan.types.js";
 
+/** Result returned by plugin/skill install security policy checks. */
 export type InstallSecurityScanResult = {
   blocked?: {
     code?: "security_scan_blocked" | "security_scan_failed";

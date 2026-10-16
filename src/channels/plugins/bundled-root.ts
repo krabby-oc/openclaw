@@ -1,4 +1,6 @@
 /**
+ * Bundled channel package-root resolver.
+ *
  * Computes cache scopes for generated channel metadata across source and packaged layouts.
  */
 import path from "node:path";

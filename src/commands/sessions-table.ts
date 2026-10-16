@@ -1,4 +1,5 @@
 /**
+ * Shared table formatting helpers for session commands.
  *
  * Cleanup and listing share display labels; terminal-core owns column layout.
  */

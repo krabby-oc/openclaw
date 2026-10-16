@@ -28,6 +28,7 @@ export type PreparedProviderStaticCatalog = Readonly<{
   entries: readonly PreparedProviderStaticCatalogEntry[];
 }>;
 
+/** Options for resolving plugin providers that can contribute model catalog entries. */
 export type ResolveRuntimePluginDiscoveryProvidersParams = {
   config?: OpenClawConfig;
   workspaceDir?: string;

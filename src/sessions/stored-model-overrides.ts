@@ -1,3 +1,4 @@
+// Resolves persisted per-session model choices across child and parent sessions.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { ModelFallbackRouteResolution } from "../agents/model-fallback.types.js";
 import type { ModelManifestNormalizationContext } from "../agents/model-ref-shared.js";

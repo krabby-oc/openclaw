@@ -26,6 +26,7 @@ import {
 } from "./runtime-degraded-state.js";
 import type { PluginLogger } from "./types.js";
 
+/** Builds the registry record shape shared by plugin loading, status, and diagnostics. */
 export function createPluginRecord(params: {
   id: string;
   nativeSessionCatalog?: PluginRecord["nativeSessionCatalog"];
@@ -153,6 +154,7 @@ export function recordPluginConfiguredUnavailable(params: {
   });
 }
 
+/** Joins auto-enable reasons into the single registry field shown by status surfaces. */
 export function formatAutoEnabledActivationReason(
   reasons: readonly string[] | undefined,
 ): string | undefined {
@@ -212,6 +214,7 @@ function resolvePluginImportHint(
   }
 }
 
+/** Records a loader failure in the registry, diagnostics list, and operator log consistently. */
 export function recordPluginError(params: {
   logger?: PluginLogger;
   registry: PluginRegistry;
@@ -278,6 +281,7 @@ export function recordPluginError(params: {
   params.logger?.error(`${params.logPrefix ?? ""}${displayError}`);
 }
 
+/** Groups failed plugin ids by loader phase for compact startup summaries. */
 export function formatPluginFailureSummary(failedPlugins: PluginRecord[]): string {
   return [...groupPluginRecords(failedPlugins, (plugin) => plugin.failurePhase ?? "load")]
     .map(([phase, plugins]) => `${phase}: ${plugins.map((plugin) => plugin.id).join(", ")}`)

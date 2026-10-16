@@ -300,6 +300,7 @@ export function createChildOwner(params: {
           throw outcome.error;
         }
         try {
+          // Preserve current-main's destination-before-original release order.
           // A failed destination release must retain the original lineage; its
           // paired occupied-slot lineage is released in the same transaction.
           const lineageCount = slot ? 2 : 1;

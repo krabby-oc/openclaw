@@ -1,3 +1,4 @@
+/** Command-registry facade for native specs, text aliases, argument parsing, and menus. */
 import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentConfig } from "../agents/agent-scope-config.js";

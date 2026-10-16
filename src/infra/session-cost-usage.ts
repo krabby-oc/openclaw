@@ -1,3 +1,4 @@
+// Stable public surface for session cost and usage collection and reporting.
 export {
   loadCostUsageSummary,
   loadCostUsageSummaryFromCache,

@@ -62,6 +62,7 @@ type GitPluginInstallResult =
   | (Extract<InstallPluginResult, { ok: true }> & { git: GitPluginResolution })
   | Extract<InstallPluginResult, { ok: false }>;
 
+/** Normalized Git plugin install spec accepted by the Git installer. */
 type ParsedGitPluginSpec = {
   input: string;
   url: string;

@@ -1,5 +1,6 @@
 import { Option, type Command } from "commander";
 
+/** Register the restricted cloud worker runtime entry point. */
 export function registerWorkerCli(program: Command): void {
   program
     .command("worker")

@@ -13,6 +13,7 @@ import {
 } from "./official-external-plugin-catalog.js";
 import type { PluginWebSearchProviderEntry } from "./web-provider-types.js";
 
+/** Install catalog entry for an official external web-search provider plugin. */
 export type WebSearchInstallCatalogEntry = {
   pluginId: string;
   label: string;
@@ -128,6 +129,7 @@ function buildProviderEntry(params: {
   };
 }
 
+/** Lists web-search provider install catalog entries from official external plugins. */
 export function resolveWebSearchInstallCatalogEntries(): WebSearchInstallCatalogEntry[] {
   const entries: WebSearchInstallCatalogEntry[] = [];
   for (const entry of listOfficialExternalPluginCatalogEntries()) {
@@ -169,6 +171,7 @@ export function resolveWebSearchInstallCatalogEntriesForEnv(
   );
 }
 
+/** Resolves one web-search install catalog entry by provider id or plugin id. */
 export function resolveWebSearchInstallCatalogEntry(params: {
   providerId?: string;
   pluginId?: string;

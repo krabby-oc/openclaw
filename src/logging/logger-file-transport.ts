@@ -1,3 +1,4 @@
+// Bounded asynchronous JSONL file transport for the process logger.
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";

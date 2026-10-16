@@ -1,3 +1,4 @@
+/** Shared doctor-only SQLite compaction mechanics. */
 import fs from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { openNodeSqliteDatabase, resolveExistingSqliteFileUri } from "../infra/node-sqlite.js";

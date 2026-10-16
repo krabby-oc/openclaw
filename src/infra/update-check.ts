@@ -1,3 +1,4 @@
+// Computes git, dependency, and registry update status for OpenClaw installs.
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { UpdateImmutableInstall } from "../../packages/gateway-protocol/src/schema/config.js";

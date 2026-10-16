@@ -1,3 +1,4 @@
+// Storage-neutral session registry maintenance for cron run cleanup.
 import fs from "node:fs";
 import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
 import {

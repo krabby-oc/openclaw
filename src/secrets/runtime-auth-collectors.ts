@@ -1,3 +1,4 @@
+/** Collects auth-profile and OAuth secret refs for runtime preparation. */
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAuthProfileEligibility } from "../agents/auth-profiles/order.js";
 import { assertNoOAuthSecretRefPolicyViolations } from "../agents/auth-profiles/policy.js";

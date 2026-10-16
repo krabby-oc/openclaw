@@ -1,3 +1,4 @@
+// Lists subagent runs with lifecycle status.
 import {
   buildSubagentList,
   readSubagentListSessionEntries,

@@ -1,3 +1,4 @@
+/** Invokes optional startup maintenance for loaded channel plugins. */
 import { listLoadedChannelPlugins } from "./registry-loaded.js";
 import type { ChannelLifecycleAdapter } from "./types.adapters.js";
 

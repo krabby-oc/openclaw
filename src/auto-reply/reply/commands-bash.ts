@@ -1,3 +1,4 @@
+// Implements bash command execution, approval, and stop handling.
 import { handleBashChatCommand } from "./bash-command.js";
 import { defineAuthorizedTextCommand, matchCommandPrefix } from "./command-gates.js";
 import type { CommandHandler } from "./commands-types.js";

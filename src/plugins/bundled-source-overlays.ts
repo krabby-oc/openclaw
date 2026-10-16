@@ -10,6 +10,7 @@ import {
 } from "./plugin-cache-files.js";
 import { getPluginCache } from "./plugin-cache.js";
 
+/** Parses Linux mountinfo content into absolute mount points. */
 function parseLinuxMountInfoMountPoints(mountInfo: string): Set<string> {
   const mountPoints = new Set<string>();
   for (const line of mountInfo.split(/\r?\n/u)) {
@@ -52,6 +53,7 @@ function sourceOverlaysDisabled(env: NodeJS.ProcessEnv): boolean {
   return raw === "1" || raw === "true";
 }
 
+/** True when a path appears to be a mounted bundled source overlay. */
 export function isBundledSourceOverlayPath(params: {
   sourcePath: string;
   mountPoints?: ReadonlySet<string>;

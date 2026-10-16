@@ -67,6 +67,7 @@ export function resolveExternalPluginRuntimeDependencyRepairHint(candidate: {
     : `runtime dependencies are missing for externally distributed plugin ${candidate.pluginId}; reinstall or update the plugin package, then restart the Gateway.`;
 }
 
+/** Resolves install/doctor commands for an official external plugin or channel id. */
 export function resolveOfficialExternalPluginRepairHint(
   pluginIdOrChannelId: string,
 ): OfficialExternalPluginRepairHint | null {

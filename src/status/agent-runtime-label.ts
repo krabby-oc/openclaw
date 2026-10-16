@@ -1,4 +1,5 @@
 import { expectDefined } from "@openclaw/normalization-core";
+// Agent runtime label helpers format provider, model, and runtime labels.
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,

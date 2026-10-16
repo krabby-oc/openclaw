@@ -40,6 +40,7 @@ function readPackageName(packageJsonPath: string): string | null {
   }
 }
 
+/** Resolves and validates the configured OpenClaw development source root. */
 export function resolveOpenClawDevSourceRoot(env: NodeJS.ProcessEnv = process.env): string | null {
   const rawRoot = env[OPENCLAW_DEV_SOURCE_ROOT_ENV]?.trim();
   if (!rawRoot) {

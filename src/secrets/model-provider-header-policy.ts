@@ -1,3 +1,4 @@
+/** Classifies model-provider request headers that should be treated as credential material. */
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 
 // Substring matching catches provider-specific auth headers without forcing every plugin to

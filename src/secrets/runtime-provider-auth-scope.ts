@@ -1,3 +1,4 @@
+/** Classifies degradation state owned by provider and auth-profile refreshes. */
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { listAuthProfileSecretOwnerIds } from "./runtime-auth-profile-owner.js";
 import type { PreparedSecretsRuntimeSnapshot } from "./runtime-state.js";

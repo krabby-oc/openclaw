@@ -30,6 +30,7 @@ export function resolvePluginDiscoveryContext(
   });
 }
 
+/** Resolves a stable fingerprint for plugin control-plane activation state. */
 export function resolvePluginControlPlaneFingerprint(
   params: ResolvePluginControlPlaneContextParams = {},
 ): string {

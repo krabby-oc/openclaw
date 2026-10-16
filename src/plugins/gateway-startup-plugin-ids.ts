@@ -1,3 +1,4 @@
+/** Public facade for deterministic Gateway startup plugin planning. */
 export type { GatewayStartupPluginPlan } from "./gateway-startup-plugin-contracts.js";
 export {
   collectConfiguredMemoryEmbeddingProviderIds,

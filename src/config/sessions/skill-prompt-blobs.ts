@@ -1,3 +1,4 @@
+// Skill prompt blobs externalize large session prompts into content-addressed files.
 import fs from "node:fs";
 import path from "node:path";
 import { sha256Hex } from "@openclaw/normalization-core/node-crypto";

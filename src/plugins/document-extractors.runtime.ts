@@ -1,3 +1,4 @@
+/** Resolves bundled document extractor providers from enabled manifest contracts. */
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveEnabledBundledManifestContractPlugins } from "./bundled-manifest-contract-plugins.js";

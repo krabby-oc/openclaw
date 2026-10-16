@@ -1,3 +1,4 @@
+// Exposes root-scoped file open helpers with fs-safe defaults.
 import {
   matchRootFileOpenFailure as matchRootFileOpenFailureFsSafe,
   readFileDescriptorBounded as readFileDescriptorBoundedFsSafe,

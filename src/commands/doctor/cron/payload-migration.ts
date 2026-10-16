@@ -1,3 +1,4 @@
+// Legacy cron payload migration for provider/channel aliases and OpenAI Codex model refs.
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,

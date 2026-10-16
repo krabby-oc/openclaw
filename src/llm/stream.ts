@@ -1,3 +1,4 @@
+// Streams LLM responses through registered providers and normalizes events.
 // This facade owns the process-default AI runtime wiring: it installs the
 // OpenClaw host policy ports and registers built-in providers exactly once,
 // before any caller imports the stream API.

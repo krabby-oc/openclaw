@@ -1,3 +1,4 @@
+/** Collects and analyzes command-scoped secret assignments from OpenClaw config. */
 import { getAuthoredConfigSecretRef, resolveConfigSecretRef } from "../config/resolution-facts.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { parseSecretRef } from "../config/types.secrets.js";

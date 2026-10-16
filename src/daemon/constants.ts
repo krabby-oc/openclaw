@@ -1,5 +1,7 @@
+/** Cross-platform daemon service names, labels, and profile-aware descriptions. */
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 
+// Default service labels (canonical + legacy compatibility)
 export const GATEWAY_LAUNCH_AGENT_LABEL = "ai.openclaw.gateway";
 const GATEWAY_SYSTEMD_SERVICE_NAME = "openclaw-gateway";
 const GATEWAY_WINDOWS_TASK_NAME = "OpenClaw Gateway";

@@ -1,3 +1,4 @@
+// Classifies whether a user's chat message approves a pending OpenClaw proposal.
 import { extractEmbeddedAssistantText } from "../agents/embedded-agent-utils.js";
 import {
   acquireSimpleCompletionModelForAgent,

@@ -1,3 +1,8 @@
+/**
+ * Shared body-stream cleanup for guarded fetch consumers (`fetchWithSsrFGuard`
+ * callers that re-wrap streaming responses).
+ */
+
 // Catches wrapper bodies abandoned without cancel/consume so guarded dispatchers
 // (and caller resources hooked into `cleanup`) do not leak with the stream.
 const guardedBodyCleanupRegistry = new FinalizationRegistry<{ finalize: () => Promise<void> }>(

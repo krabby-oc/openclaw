@@ -106,6 +106,7 @@ function addBundledChannelOwnerPluginIds(params: {
   }
 }
 
+/** Lists plugin ids that are effectively enabled for a config/discovery context. */
 type ResolveEffectivePluginIdsParams = {
   config: OpenClawConfig;
   env: NodeJS.ProcessEnv;

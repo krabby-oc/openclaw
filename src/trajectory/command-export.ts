@@ -6,6 +6,8 @@ import { root } from "../infra/fs-safe.js";
 import { isPathStrictlyInside } from "../infra/path-guards.js";
 import { exportTrajectoryBundle, resolveDefaultTrajectoryExportDir } from "./export.js";
 
+// CLI-facing trajectory export wrapper: resolves safe workspace-local paths,
+// writes the diagnostic bundle, and formats the terse success summary.
 export type TrajectoryCommandExportSummary = Awaited<ReturnType<typeof exportTrajectoryForCommand>>;
 
 async function resolveTrajectoryExportBaseDir(workspaceDir: string) {

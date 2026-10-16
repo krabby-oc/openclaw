@@ -1,4 +1,5 @@
 import { expectDefined } from "@openclaw/normalization-core";
+// Implements approval commands for pending exec, plugin, and OpenClaw change requests.
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import {
   getChannelPlugin,

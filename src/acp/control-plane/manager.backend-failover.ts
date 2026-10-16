@@ -1,3 +1,4 @@
+/** Backend failover helpers for ACP session initialization and turn execution. */
 import type { AcpRuntimeErrorCode } from "../runtime/errors.js";
 import { normalizeText } from "./runtime-options.js";
 

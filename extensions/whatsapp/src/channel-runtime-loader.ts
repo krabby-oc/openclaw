@@ -1,3 +1,4 @@
+// Whatsapp plugin module owns the source-safe channel runtime loading boundary.
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 
 const loadWhatsAppAuthStore = createLazyRuntimeModule(() => import("./auth-store.js"));

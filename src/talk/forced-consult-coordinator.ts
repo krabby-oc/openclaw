@@ -1,4 +1,6 @@
 /**
+ * Forced-consult dedupe coordinator for realtime voice sessions.
+ *
  * The relay may synthesize an OpenClaw consult when the model hesitates, but a
  * native provider tool call can still arrive later. This coordinator prevents
  * duplicate consults and keeps late native calls correlated to forced handles.

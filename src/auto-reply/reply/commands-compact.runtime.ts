@@ -1,3 +1,4 @@
+/** Runtime facade for compact command dependencies. */
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
 import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import { retainPreparedSessionEntryPredicate } from "../../config/sessions/session-accessor.sqlite-entry-cache-publication-state.js";

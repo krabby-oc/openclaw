@@ -17,6 +17,7 @@ export function resolveProviderRuntimeWorkspaceDir(
   );
 }
 
+/** Normalizes provider ids used by capability-provider registries. */
 export function normalizeCapabilityProviderId(providerId: string | undefined): string | undefined {
   const normalized = normalizeOptionalLowercaseString(providerId);
   return normalized && !isBlockedObjectKey(normalized) ? normalized : undefined;

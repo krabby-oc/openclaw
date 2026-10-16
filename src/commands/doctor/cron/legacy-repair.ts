@@ -1,3 +1,5 @@
+// Doctor cron storage repair mechanics for quarantine, payloads, and Codex refs.
+
 import { isDeepStrictEqual } from "node:util";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import {

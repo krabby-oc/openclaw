@@ -33,6 +33,7 @@ export function getActivePluginChannelRegistrySnapshotFromState(): ActivePluginC
   return snapshot;
 }
 
+/** Returns the active plugin channel registry from global runtime state. */
 export function getActivePluginChannelRegistryFromState(): ActivePluginChannelRegistry | null {
   return getActivePluginChannelRegistrySnapshotFromState().registry;
 }

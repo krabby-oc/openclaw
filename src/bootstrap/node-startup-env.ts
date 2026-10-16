@@ -1,3 +1,4 @@
+// Builds Node startup environment variables for subprocess launches.
 import { readNonBlankString } from "@openclaw/normalization-core/string-coerce";
 import { type EnvMap, resolveAutoNodeExtraCaCerts } from "./node-extra-ca-certs.js";
 

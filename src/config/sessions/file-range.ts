@@ -1,3 +1,4 @@
+// Session file helpers share bounded random-access reads across transcript consumers.
 import type { FileHandle } from "node:fs/promises";
 import { readFileWindowFully } from "@openclaw/fs-safe/advanced";
 

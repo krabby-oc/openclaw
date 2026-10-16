@@ -1,4 +1,6 @@
 /**
+ * Plugin Command Handler
+ *
  * Handles commands registered by plugins, bypassing the LLM agent.
  * This handler is called before built-in command handlers.
  */

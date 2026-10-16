@@ -8,6 +8,7 @@ import {
 
 const LEGACY_INSTALLED_PLUGIN_INDEX_STORE_PATH = path.join("plugins", "installs.json");
 
+/** Options for resolving installed plugin index storage paths. */
 export type InstalledPluginIndexStoreOptions = {
   env?: NodeJS.ProcessEnv;
   stateDir?: string;
@@ -36,6 +37,7 @@ export function resolveInstalledPluginIndexStorePath(
   return resolveOpenClawStateSqlitePath(resolveStoreEnv(options));
 }
 
+/** Resolves state database options for the installed plugin index store. */
 export function resolveInstalledPluginIndexStateDatabaseOptions(
   options: InstalledPluginIndexStoreOptions = {},
 ): OpenClawStateDatabaseOptions {

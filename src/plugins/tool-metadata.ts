@@ -39,6 +39,7 @@ type PluginToolMeta = {
 
 const pluginToolMeta = new WeakMap<AnyAgentTool, PluginToolMeta>();
 
+/** Attaches plugin ownership metadata to a concrete agent tool instance. */
 export function setPluginToolMeta(tool: AnyAgentTool, meta: PluginToolMeta): void {
   pluginToolMeta.set(tool, meta);
 }

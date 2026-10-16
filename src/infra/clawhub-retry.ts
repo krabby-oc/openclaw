@@ -1,3 +1,4 @@
+// Defines the bounded retry contract shared by ClawHub runtime and release reads.
 // Release harnesses run before workspace dist exists; keep classification source-owned.
 import { isTransientNetworkError } from "../../packages/ai/src/utils/retryable-network-errors.js";
 import { parseRetryAfterHeaderSeconds } from "./retry-after.js";

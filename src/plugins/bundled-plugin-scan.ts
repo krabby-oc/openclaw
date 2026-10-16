@@ -26,6 +26,7 @@ const RUNTIME_SIDECAR_ARTIFACTS = new Set([
 export { normalizeOptionalString as trimBundledPluginString };
 export { normalizeTrimmedStringList as normalizeBundledPluginStringList };
 
+/** Converts a source entry path to its built JavaScript artifact path. */
 export function rewriteBundledPluginEntryToBuiltPath(
   entry: string | undefined,
 ): string | undefined {
@@ -56,6 +57,7 @@ function isTopLevelPublicSurfaceSource(name: string): boolean {
   return !/(\.test|\.spec)(\.[cm]?[jt]s)$/u.test(name);
 }
 
+/** Derives a stable id hint for bundled plugins with one or more extension entrypoints. */
 export function deriveBundledPluginIdHint(params: {
   entryPath: string;
   manifestId: string;
@@ -112,6 +114,7 @@ export function collectBundledPluginRuntimeSidecarArtifacts(
   return artifacts.length > 0 ? artifacts : undefined;
 }
 
+/** Chooses the source or built extension directory appropriate for the current package layout. */
 export function resolveBundledPluginScanDir(params: {
   packageRoot: string;
   runningFromBuiltArtifact: boolean;
@@ -179,6 +182,7 @@ function listBundledPluginEntrySearchPaths(
   return uniqueStrings(paths);
 }
 
+/** Resolves a generated runtime path for a bundled plugin entry. */
 export function resolveBundledPluginGeneratedPath(
   rootDir: string,
   entry: BundledPluginPathPair | undefined,

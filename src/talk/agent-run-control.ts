@@ -1,4 +1,6 @@
 /**
+ * Runtime adapter for realtime voice control of active OpenClaw agent runs.
+ *
  * The shared module owns classification and message contracts; this adapter
  * binds those contracts to embedded-run abort, status, and steering primitives.
  */

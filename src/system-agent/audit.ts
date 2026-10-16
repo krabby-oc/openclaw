@@ -1,3 +1,4 @@
+// OpenClaw audit helpers persist approved local-state changes.
 import { randomUUID } from "node:crypto";
 import { registerSqliteAuditRecordAsync } from "../infra/sqlite-audit-record-store.async.js";
 import { redactSecrets } from "../logging/redact.js";

@@ -140,6 +140,7 @@ async function scanCodexNativeAssets(params: {
   return [...hits.values()].toSorted((a, b) => a.path.localeCompare(b.path));
 }
 
+/** Build an informational doctor note when personal Codex CLI assets need migration review. */
 export async function collectCodexNativeAssetInfoNotes(params: {
   cfg: OpenClawConfig;
   env?: NodeJS.ProcessEnv;

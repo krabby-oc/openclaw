@@ -1,3 +1,4 @@
+/** Onboarding defaults for workspace hooks. */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 
 export function enableDefaultOnboardingInternalHooks(cfg: OpenClawConfig): OpenClawConfig {

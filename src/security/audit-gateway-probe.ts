@@ -1,3 +1,4 @@
+// Gateway probing and credential-safe projection for deep security audits.
 import { redactSensitiveUrlLikeString } from "@openclaw/net-policy/redact-sensitive-url";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { buildGatewayConnectionDetails } from "../gateway/call.js";

@@ -1,3 +1,4 @@
+// GitHub Copilot runtime-auth errors shared by provider setup and fallback policy.
 type CopilotRuntimeAuthFailure =
   | { reason: "http_error"; status: number }
   | { reason: "timeout"; timeoutMs: number; cause?: unknown };

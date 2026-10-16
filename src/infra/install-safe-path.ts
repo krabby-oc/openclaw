@@ -1,3 +1,4 @@
+// Provides safe path helpers for plugin installation targets.
 export {
   assertCanonicalPathWithinBase,
   resolveSafeInstallDir,

@@ -1,3 +1,4 @@
+/** Compiles, matches, and expands secret target registry path patterns. */
 import type { ConcreteConfigPathSegment } from "../shared/dot-path.js";
 import { parseConfigPathArrayIndex } from "../shared/path-array-index.js";
 import { isRecord, parseDotPath } from "./shared.js";

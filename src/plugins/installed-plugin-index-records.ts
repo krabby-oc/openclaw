@@ -1,3 +1,4 @@
+/** Builds and compares installed plugin index records for refresh decisions. */
 import { copyPluginInstallRecordMap } from "../config/plugin-install-record-map.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
@@ -18,6 +19,7 @@ export {
 /** Config path for legacy plugin install records kept for migration/doctor flows. */
 export const PLUGIN_INSTALLS_CONFIG_PATH = ["plugins", "installs"] as const;
 
+/** Options shared by installed plugin index record storage helpers. */
 export type InstalledPluginIndexRecordStoreOptions = {
   env?: NodeJS.ProcessEnv;
   stateDir?: string;
@@ -46,6 +48,7 @@ export async function writePersistedInstalledPluginIndexInstallRecordsWithLease(
   return receipt;
 }
 
+/** Returns config with plugin install records attached at the canonical config path. */
 export function withPluginInstallRecords(
   config: OpenClawConfig,
   records: Record<string, PluginInstallRecord>,
@@ -59,6 +62,7 @@ export function withPluginInstallRecords(
   };
 }
 
+/** Returns config with legacy plugin install records removed. */
 export function withoutPluginInstallRecords(
   config: OpenClawConfig,
   options: { preserveEmptyPlugins?: boolean } = {},
@@ -80,6 +84,7 @@ export function withoutPluginInstallRecords(
   };
 }
 
+/** Removes one plugin install record from an in-memory record map. */
 export function removePluginInstallRecordFromRecords(
   records: Record<string, PluginInstallRecord>,
   pluginId: string,

@@ -1,3 +1,4 @@
+/** Discovers plugin-declared environment variable names for channel credential setup. */
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolvePluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
@@ -39,12 +40,18 @@ function resolveChannelEnvVars(
   return candidates;
 }
 
+/**
+ * Returns the declared env var names for one channel id.
+ */
 export function getChannelEnvVars(channelId: string, params?: ChannelEnvVarLookupParams): string[] {
   const channelEnvVars = resolveChannelEnvVars(params);
   const envVars = Object.hasOwn(channelEnvVars, channelId) ? channelEnvVars[channelId] : undefined;
   return Array.isArray(envVars) ? [...envVars] : [];
 }
 
+/**
+ * Lists every known channel env var name across installed plugin metadata.
+ */
 export function listKnownChannelEnvVarNames(params?: ChannelEnvVarLookupParams): string[] {
   return uniqueStrings(Object.values(resolveChannelEnvVars(params)).flat());
 }

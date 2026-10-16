@@ -1,3 +1,4 @@
+// Owns recovery of an unusable managed-handoff lease store.
 import fs from "node:fs";
 import path from "node:path";
 import { hasErrnoCode } from "./errno.js";

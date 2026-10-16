@@ -11,6 +11,7 @@ export type InstalledPluginFileSignature = {
   ctimeMs?: number;
 };
 
+/** Hashes JSON-serializable data with SHA-256. */
 export function hashJson(value: unknown): string {
   return sha256Hex(JSON.stringify(value));
 }
@@ -20,6 +21,7 @@ export function hashStableJson(value: unknown): string {
   return sha256Hex(stableStringify(value));
 }
 
+/** Safely hashes a file, optionally recording required-file diagnostics. */
 export function safeHashFile(params: {
   filePath: string;
   pluginId?: string;
@@ -43,6 +45,7 @@ export function safeHashFile(params: {
   }
 }
 
+/** Reads a safe file signature for installed plugin index freshness checks. */
 export function safeFileSignature(filePath: string): InstalledPluginFileSignature | undefined {
   const stat = safeStatSync(filePath);
   return stat?.isFile()

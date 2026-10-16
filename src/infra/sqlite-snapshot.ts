@@ -1,3 +1,4 @@
+// Creates verified SQLite snapshots, compacting by default.
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";

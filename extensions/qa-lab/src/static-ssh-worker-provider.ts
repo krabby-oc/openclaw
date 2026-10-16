@@ -1,3 +1,4 @@
+// QA Lab static-SSH worker provider for cloud-worker feature development.
 import type {
   WorkerProfile,
   WorkerProvider,

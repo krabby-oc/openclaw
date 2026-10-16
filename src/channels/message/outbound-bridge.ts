@@ -1,4 +1,6 @@
 /**
+ * Legacy outbound bridge adapter.
+ *
  * Wraps old channel send functions in the newer channel message adapter contract.
  */
 import { defaultManualReceiveAdapter } from "./adapter.js";

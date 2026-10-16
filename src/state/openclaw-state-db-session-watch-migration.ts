@@ -1,3 +1,4 @@
+// Schema-v4 migration for legacy ambient session-watch sentinel rows.
 import type { DatabaseSync } from "node:sqlite";
 import {
   executeSqliteQuerySync,

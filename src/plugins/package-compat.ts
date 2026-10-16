@@ -60,8 +60,10 @@ const OPENCLAW_RELEASE_SUFFIX_PATTERN =
   /^[vV]?(\d{4}\.[1-9]\d?\.[1-9]\d*)(?:-\d+|-(?:alpha|beta|rc)\.\d+)$/i;
 const OPENCLAW_NUMERIC_CORRECTION_PATTERN = /^[vV]?(\d{4}\.[1-9]\d?\.[1-9]\d*)-\d+$/;
 
+/** Result of reading package.json openclaw.compat.pluginApi metadata. */
 type PackagePluginApiRangeResult = { ok: true; range?: string } | { ok: false; error: string };
 
+/** Resolves the plugin API compatibility range declared by package metadata. */
 export function resolvePackagePluginApiRange(
   packageMetadata: unknown,
 ): PackagePluginApiRangeResult {
@@ -89,6 +91,7 @@ export function resolvePackagePluginApiRange(
   return { ok: true, range };
 }
 
+/** Checks whether a host plugin API version satisfies a package plugin API range. */
 export function satisfiesPluginApiRange(
   pluginApiVersion: string,
   pluginApiRange?: string | null,

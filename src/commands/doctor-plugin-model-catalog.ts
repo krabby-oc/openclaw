@@ -1,3 +1,4 @@
+/** Doctor-owned migration and repair of persisted generated provider catalogs. */
 import { note } from "../../packages/terminal-core/src/note.js";
 import { listAgentIds, resolveAgentDir, resolveDefaultAgentDir } from "../agents/agent-scope.js";
 import { repairPluginModelCatalogTransportMetadata } from "../agents/plugin-model-catalog-repair.js";

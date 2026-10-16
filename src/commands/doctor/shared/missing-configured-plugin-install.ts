@@ -1,3 +1,4 @@
+// Public Doctor configured-plugin install repair facade.
 export {
   configuredPluginInstallIssueToHealthFinding,
   configuredPluginInstallIssueToRepairEffect,

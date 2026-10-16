@@ -1,4 +1,6 @@
 /**
+ * Core-owned durable channel-ingress drain.
+ *
  * Owns claim recovery, per-lane serialization, adoption-time complete, retry /
  * dead-letter disposition, pre-adoption stall watchdog, and optional supersede.
  */

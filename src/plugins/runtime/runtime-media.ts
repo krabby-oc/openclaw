@@ -17,6 +17,7 @@ const resizeToJpeg = createLazyRuntimeMethod(
   (runtime) => runtime.resizeToJpeg,
 );
 
+/** Creates the plugin runtime media facade. */
 export function createRuntimeMedia(): PluginRuntime["media"] {
   return {
     loadWebMedia,

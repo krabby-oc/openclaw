@@ -1,4 +1,5 @@
 import type { ModelCatalogContextWindowOption } from "@openclaw/model-catalog-core/model-catalog-types";
+/** Shared normalization for thinking, verbosity, tracing, reasoning, and usage directives. */
 import {
   type FastMode,
   normalizeFastMode,

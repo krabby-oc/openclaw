@@ -1,3 +1,4 @@
+// Top-level text status scan entrypoint.
 // Human `status --all` and JSON status use their dedicated command paths.
 
 import { withProgress } from "../cli/progress.js";
@@ -6,6 +7,7 @@ import { executeStatusScanFromOverview } from "./status.scan-execute.ts";
 import { collectStatusScanOverview } from "./status.scan-overview.ts";
 import type { StatusScanResult } from "./status.scan-result.ts";
 
+/** Runs the text status scan. */
 export async function scanStatus(
   opts: StatusGatewayProbeBudget & {
     deep?: boolean;

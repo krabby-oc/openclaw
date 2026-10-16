@@ -1,3 +1,4 @@
+/** Detects reminder commitments that were not backed by scheduled cron jobs. */
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { loadCronJobsStore } from "../../cron/store.js";
 import { copyReplyPayloadMetadata } from "../reply-payload.js";

@@ -1,3 +1,4 @@
+// Shared status scan helpers for gateway probing, Tailscale URL formatting, and memory status.
 // This file owns the cross-command contracts reused by normal, JSON, and status-all scans.
 
 import { existsSync } from "node:fs";

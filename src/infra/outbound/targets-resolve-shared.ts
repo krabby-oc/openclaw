@@ -1,3 +1,5 @@
+// Shared target resolution applies plugin defaults, allowlists, prefixes, and
+// fallback errors for direct and loaded-channel send paths.
 import { mapAllowFromEntries } from "openclaw/plugin-sdk/channel-config-helpers";
 import { resolveChannelAllowFrom } from "../../channels/account-resolution.js";
 import type { AnyChannelPlugin as ChannelPlugin } from "../../channels/plugins/types.plugin.js";
@@ -9,8 +11,14 @@ import { validateTargetProviderPrefix } from "./channel-target-prefix.js";
 import { missingTargetError, reservedTargetLiteralError } from "./target-errors.js";
 import { resolveReservedTargetLiteral } from "./target-normalization.js";
 
+/**
+ * Result of resolving a concrete outbound target for a channel send.
+ */
 export type OutboundTargetResolution = { ok: true; to: string } | { ok: false; error: Error };
 
+/**
+ * Inputs shared by direct and heartbeat outbound target resolution.
+ */
 export type ResolveOutboundTargetParams = {
   channel: string;
   to?: string;

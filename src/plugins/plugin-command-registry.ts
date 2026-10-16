@@ -1,3 +1,4 @@
+/** Exact registry projection helpers for plugin command runtimes. */
 import type { PluginRegistry } from "./registry-types.js";
 import { getPluginRegistryState } from "./runtime-state.js";
 import { getPluginRuntimeGatewayRequestScope } from "./runtime/gateway-request-scope.js";

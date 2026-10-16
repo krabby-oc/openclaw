@@ -1,3 +1,5 @@
+// Split into focused modules to keep files small and improve edit locality.
+
 export type * from "./types.agent-defaults.js";
 export type * from "./types.agents.js";
 export type * from "./types.acp.js";

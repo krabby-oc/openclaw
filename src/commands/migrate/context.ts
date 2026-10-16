@@ -1,3 +1,4 @@
+/** Migration provider context and report-directory helpers. */
 import path from "node:path";
 import { isValidAgentId, normalizeAgentId } from "@openclaw/normalization-core/agent-id";
 import { timestampMsToIsoFileStamp } from "@openclaw/normalization-core/number-coercion";
@@ -23,6 +24,7 @@ export function createMigrationLogger(runtime: RuntimeEnv, opts: { json?: boolea
   };
 }
 
+/** Builds the timestamped directory where a provider writes migration reports. */
 export function buildMigrationReportDir(
   providerId: string,
   stateDir: string,

@@ -278,18 +278,22 @@ export function hasPowerShellProfileStartupBeforeInlineCommand(
   return valueTokenIndex === null || !profilesDisabled;
 }
 
+/** Return true when a PowerShell flag consumes the rest of argv as command text. */
 export function isPowerShellInlineRestCommandFlag(token: string): boolean {
   return POWERSHELL_INLINE_REST_COMMAND_FLAGS.has(normalizeLowercaseStringOrEmpty(token));
 }
 
+/** Return true when a PowerShell flag treats the next token as script file text. */
 export function isPowerShellInlineFileCommandFlag(token: string): boolean {
   return POWERSHELL_INLINE_FILE_FLAGS.has(normalizeLowercaseStringOrEmpty(token));
 }
 
+/** Return true when a PowerShell flag executes an opaque encoded command. */
 export function isPowerShellInlineEncodedCommandFlag(token: string): boolean {
   return POWERSHELL_INLINE_ENCODED_COMMAND_FLAGS.has(normalizeLowercaseStringOrEmpty(token));
 }
 
+/** Detect POSIX interactive startup before an inline command flag. */
 export function hasPosixInteractiveStartupBeforeInlineCommand(
   argv: readonly string[],
   flags: ReadonlySet<string>,
@@ -297,6 +301,7 @@ export function hasPosixInteractiveStartupBeforeInlineCommand(
   return hasPosixStartupModeBeforeInlineCommand(argv, flags, "--interactive", "i");
 }
 
+/** Detect POSIX login startup before an inline command flag. */
 export function hasPosixLoginStartupBeforeInlineCommand(
   argv: readonly string[],
   flags: ReadonlySet<string>,

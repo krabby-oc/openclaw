@@ -15,6 +15,7 @@ export function isTypeScriptPackageEntry(entryPath: string): boolean {
   return [".ts", ".tsx", ".mts", ".cts"].includes(path.extname(entryPath).toLowerCase());
 }
 
+/** Lists built runtime entry candidates for a TypeScript package entrypoint. */
 export function listBuiltRuntimeEntryCandidates(entryPath: string): string[] {
   if (!isTypeScriptPackageEntry(entryPath)) {
     return [];

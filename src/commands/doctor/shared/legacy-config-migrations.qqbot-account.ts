@@ -1,3 +1,4 @@
+// Account and credential migrations for the Tencent QQBot 2.0 cutover.
 import { getRecord } from "../../../config/legacy.shared.js";
 import { isBlockedObjectKey } from "../../../infra/prototype-keys.js";
 
