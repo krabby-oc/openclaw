@@ -416,10 +416,10 @@ describe("recipient publication lifetimes", () => {
     );
     let polling = false;
     let loaded = false;
-    const broadcastToConnIds = vi.fn();
+    const broadcast = vi.fn();
     running = createTestControlUiSessionPrSubscriptions({
       scheduler,
-      broadcastToConnIds,
+      broadcastToConnIds: broadcast,
       prepareRead: async (connId) => async () => {
         const grant = access.get(connId)!;
         if (polling && connId === "held") {
@@ -444,7 +444,7 @@ describe("recipient publication lifetimes", () => {
     for (const connId of access.keys()) {
       await running.replace(connId, ["shared"]);
     }
-    broadcastToConnIds.mockClear();
+    broadcast.mockClear();
     polling = true;
     const poll = running.pollNow();
     try {
@@ -456,7 +456,7 @@ describe("recipient publication lifetimes", () => {
       await poll;
 
       expect(loaded).toBe(true);
-      expect(broadcastToConnIds).toHaveBeenCalledExactlyOnceWith(...publication("survivor"));
+      expect(broadcast).toHaveBeenCalledExactlyOnceWith(...publication("survivor"));
     } finally {
       releaseRead.resolve();
       releaseLoad.resolve();
