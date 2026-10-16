@@ -16,6 +16,8 @@ import { defaultControlUiFeatureMethods } from "./control-ui-e2e-defaults.ts";
 import type { ControlUiMockGatewayScenario } from "./control-ui-e2e.ts";
 import type { ControlUiMockPresenceUser } from "./control-ui-mock-presence.ts";
 import {
+  createTeamScaleSessionEvents,
+  prepareTeamScaleSessionOwnership,
   prepareTeamScaleSidebarListChurn,
   type TeamScaleLiveEvent,
 } from "./control-ui-sidebar-list-fixture.ts";
@@ -157,24 +159,7 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
     };
   });
   if (options.sidebarListChurn || options.sidebarLiveChurn || options.sessionEventChurn) {
-    for (const [index, row] of sessions.entries()) {
-      const owner = people[index % counts.owners]!;
-      row.owner = {
-        actor: {
-          type: "human",
-          id: owner.id,
-          identity: { type: "profile", id: owner.id },
-          label: owner.name,
-        },
-      };
-      row.hiddenFromInvolvingMe = false;
-      if (index < 230 && owner.id !== people[0]!.id) {
-        row.participants = [
-          ...row.participants!,
-          { identity: { type: "profile", id: people[0]!.id }, label: people[0]!.name },
-        ];
-      }
-    }
+    prepareTeamScaleSessionOwnership(sessions, people.slice(0, counts.owners));
   }
   const pinnedRows = sessions.slice(-counts.pinned);
   const pinnedKeys = pinnedRows.map((row) => row.key);
@@ -679,30 +664,7 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
     }
   }
   if (options.sessionEventChurn) {
-    liveEvents.splice(0);
-    for (let index = 0; index < 240; index++) {
-      const atMs = (index + 1) * 125;
-      const row = {
-        ...sessions[index % 24]!,
-        updatedAt: now + atMs,
-        snapshotAt: now + atMs,
-        lastMessagePreview: `Synthetic worker ${(index % 24) + 1}: completed checkpoint ${Math.floor(index / 24) + 1}.`,
-      };
-      liveEvents.push({
-        atMs,
-        kind: "sessions.changed.active-worker",
-        event: "sessions.changed",
-        sessionMutation: { upsert: [row] },
-        payload: {
-          ...row,
-          sessionKey: row.key,
-          reason: "agent.run.updated",
-          ts: row.updatedAt,
-          session: row,
-          ancestorSessions: [],
-        },
-      });
-    }
+    liveEvents.splice(0, liveEvents.length, ...createTeamScaleSessionEvents(sessions, now));
   }
   return {
     scenario,
