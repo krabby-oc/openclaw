@@ -8,11 +8,7 @@ import {
   extractWorkerBundleArchive,
   DEFAULT_WORKER_BUNDLE_ARCHIVE_LIMITS,
 } from "../../shared/worker-bundle-archive.js";
-import {
-  closeOpenClawStateDatabaseAsync,
-  closeOpenClawStateDatabaseForTest,
-  openOpenClawStateDatabase,
-} from "../../state/openclaw-state-db.js";
+import * as stateDb from "../../state/openclaw-state-db.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import * as bundleStaging from "./bundle-staging.js";
 import {
@@ -45,30 +41,19 @@ const artifactSources = {
   "workspace-rsync-receiver.mjs": "export const receiver = true;\n",
 };
 const artifactNames = Object.keys(artifactSources);
+const packageMetadata = `${JSON.stringify({ name: "openclaw", version: "1.2.3" })}\n`;
+const workerSource = artifactSources["worker.mjs"];
 
 function writeWorker(packageRoot: string, source: string, artifact = "worker.mjs") {
   return fs.writeFile(path.join(packageRoot, "dist/worker", artifact), source);
 }
 
-async function writeFixture(
-  packageRoot: string,
-  workerSource = artifactSources["worker.mjs"],
-): Promise<void> {
+async function writeFixture(packageRoot: string, source = workerSource) {
   await fs.mkdir(path.join(packageRoot, "dist", "worker"), { recursive: true });
-  await fs.writeFile(
-    path.join(packageRoot, "package.json"),
-    `${JSON.stringify({
-      name: "openclaw",
-      version: "1.2.3",
-      type: "module",
-      dependencies: { json5: "2.2.3" },
-      scripts: { postinstall: "node scripts/postinstall.mjs" },
-    })}\n`,
-    "utf8",
-  );
+  await fs.writeFile(path.join(packageRoot, "package.json"), packageMetadata);
   for (const [artifactName, contents] of Object.entries({
     ...artifactSources,
-    "worker.mjs": workerSource,
+    "worker.mjs": source,
   })) {
     await fs.writeFile(path.join(packageRoot, "dist", "worker", artifactName), contents, {
       encoding: "utf8",
@@ -81,9 +66,7 @@ async function listTarball(tarballPath: string): Promise<string[]> {
   const entries: string[] = [];
   await tar.list({
     file: tarballPath,
-    onReadEntry(entry) {
-      entries.push(entry.path);
-    },
+    onReadEntry: (entry) => entries.push(entry.path),
   });
   return entries;
 }
@@ -93,16 +76,16 @@ function withFixture(
     root: string;
     packageRoot: string;
     cacheDir: string;
-    producer: (
-      options?: Parameters<typeof createWorkerBundleProducer>[0],
-    ) => ReturnType<typeof createWorkerBundleProducer>;
+    producer: typeof createWorkerBundleProducer;
   }) => Promise<void>,
-  source?: string,
+  source?: string | false,
 ) {
   return withTestDir({ prefix: "openclaw-worker-bundle-" }, async (root) => {
     const packageRoot = path.join(root, "package");
     const cacheDir = path.join(root, "cache");
-    await writeFixture(packageRoot, source);
+    if (source !== false) {
+      await writeFixture(packageRoot, source);
+    }
     await run({
       root,
       packageRoot,
@@ -167,13 +150,10 @@ describe("worker bundle producer", () => {
       const built = await producer().prepare();
 
       const installedRoot = path.join(root, "installed");
-      const archiveRoot = path.join(installedRoot, "dist/worker-artifacts");
-      await fs.mkdir(archiveRoot, { recursive: true });
-      await fs.writeFile(
-        path.join(installedRoot, "package.json"),
-        `${JSON.stringify({ name: "openclaw", version: "1.2.3" })}\n`,
-      );
-      const packagedArchive = path.join(archiveRoot, `${built.bundleHash}.tar.gz`);
+      const archivePath = path.join("dist/worker-artifacts", `${built.bundleHash}.tar.gz`);
+      const packagedArchive = path.join(installedRoot, archivePath);
+      await fs.mkdir(path.dirname(packagedArchive), { recursive: true });
+      await fs.writeFile(path.join(installedRoot, "package.json"), packageMetadata);
       await fs.copyFile(built.tarballPath, packagedArchive);
 
       const installed = await producer({
@@ -197,11 +177,7 @@ describe("worker bundle producer", () => {
       }).prepare();
       expect(throughAlias).toMatchObject({
         bundleHash: built.bundleHash,
-        tarballPath: path.join(
-          installedAlias,
-          "dist/worker-artifacts",
-          `${built.bundleHash}.tar.gz`,
-        ),
+        tarballPath: path.join(installedAlias, archivePath),
       });
     }, 'export { value } from "./worker-chunk-runtime.mjs";');
   });
@@ -248,11 +224,10 @@ describe("worker bundle producer", () => {
         if (["code-mode-node.worker.mjs", "windows-security-helper.exe"].includes(artifactName)) {
           continue;
         }
-        await expect(fs.readFile(path.join(extractRoot, artifactName), "utf8")).resolves.toBe(
-          expectedContents,
-        );
+        const file = path.join(extractRoot, artifactName);
+        await expect(fs.readFile(file, "utf8")).resolves.toBe(expectedContents);
         if (process.platform !== "win32") {
-          expect((await fs.stat(path.join(extractRoot, artifactName))).mode & 0o777).toBe(0o700);
+          expect((await fs.stat(file)).mode & 0o777).toBe(0o700);
         }
       }
       await expect(fs.access(path.join(extractRoot, "package.json"))).rejects.toThrow();
@@ -264,10 +239,7 @@ describe("worker bundle producer", () => {
     await withFixture(async ({ packageRoot, producer }) => {
       const first = await producer().prepare();
 
-      await fs.writeFile(
-        path.join(packageRoot, "dist", "entry.js"),
-        "export const unrelated = 2;\n",
-      );
+      await fs.writeFile(path.join(packageRoot, "dist/entry.js"), "export const unrelated = 2;\n");
       const unrelated = await producer().prepare();
       expect(unrelated.bundleHash).toBe(first.bundleHash);
 
@@ -358,7 +330,7 @@ describe("worker bundle producer", () => {
         });
         try {
           const store = await createWorkerEnvironmentStore({
-            database: openOpenClawStateDatabase({ path: databasePath }),
+            database: stateDb.openOpenClawStateDatabase({ path: databasePath }),
           });
           await store.createIntent({
             environmentId: "preparing",
@@ -377,15 +349,15 @@ describe("worker bundle producer", () => {
             from: "requested",
             to: "provisioning",
           });
-          await closeOpenClawStateDatabaseAsync();
-          closeOpenClawStateDatabaseForTest();
+          await stateDb.closeOpenClawStateDatabaseAsync();
+          stateDb.closeOpenClawStateDatabaseForTest();
 
           await writeFixture(packageRoot, "export const value = 2;\n");
           const successor = producer({ cacheOwnership: "exclusive" });
           const current = await successor.prepare();
           expect(current.bundleHash).not.toBe(admitted.bundleHash);
           const reopened = await createWorkerEnvironmentStore({
-            database: openOpenClawStateDatabase({ path: databasePath }),
+            database: stateDb.openOpenClawStateDatabase({ path: databasePath }),
           });
           expect(reopened.get("preparing")).toMatchObject({
             state: "provisioning",
@@ -406,8 +378,8 @@ describe("worker bundle producer", () => {
           await expect(fs.stat(admitted.tarballPath)).rejects.toMatchObject({ code: "ENOENT" });
           await expect(fs.stat(current.tarballPath)).resolves.toBeDefined();
         } finally {
-          await closeOpenClawStateDatabaseAsync();
-          closeOpenClawStateDatabaseForTest();
+          await stateDb.closeOpenClawStateDatabaseAsync();
+          stateDb.closeOpenClawStateDatabaseForTest();
         }
       }, "export const value = 1;\n");
     },
@@ -542,20 +514,16 @@ describe("worker bundle producer", () => {
   });
 
   it("keeps custom caches non-destructive after failed preparation", async () => {
-    await withTestDir({ prefix: "openclaw-worker-bundle-shared-cache-" }, async (root) => {
-      const cacheDir = path.join(root, "cache");
+    await withFixture(async ({ cacheDir, producer }) => {
       await fs.mkdir(cacheDir);
       const historical = path.join(cacheDir, `${"c".repeat(64)}.tgz`);
       await fs.writeFile(historical, "historical");
-      const shared = createWorkerBundleProducer({
-        packageRoot: path.join(root, "missing-package"),
-        cacheDir,
-      });
+      const shared = producer();
 
       await expect(shared.prepare()).rejects.toThrow("worker deploy artifact is missing");
       await shared.prune(() => []);
       await expect(fs.readFile(historical, "utf8")).resolves.toBe("historical");
-    });
+    }, false);
   });
 
   it("archives staged bytes when the source changes during packaging", async () => {
@@ -596,24 +564,19 @@ describe("worker bundle producer", () => {
   });
 
   it("owns one immutable build snapshot and retries failed preparation", async () => {
-    await withTestDir({ prefix: "openclaw-worker-bundle-cache-" }, async (root) => {
-      const packageRoot = path.join(root, "package");
-      const producer = createWorkerBundleProducer({
-        packageRoot,
-        cacheDir: path.join(root, "cache"),
-        protocolFeatures: ["resume", "admission", "resume"],
-      });
-      const failed = producer.prepare();
+    await withFixture(async ({ packageRoot, producer }) => {
+      const owner = producer({ protocolFeatures: ["resume", "admission", "resume"] });
+      const failed = owner.prepare();
       await expect(failed).rejects.toThrow("worker deploy artifact is missing");
       await writeFixture(packageRoot);
 
-      const retried = producer.prepare();
+      const retried = owner.prepare();
       expect(retried).not.toBe(failed);
       const first = await retried;
       await writeWorker(packageRoot, "changed\n");
-      await expect(producer.prepare()).resolves.toBe(first);
+      await expect(owner.prepare()).resolves.toBe(first);
       expect(first.protocolFeatures).toEqual(["admission", "resume"]);
-    });
+    }, false);
   });
 
   it("replaces a corrupt content-addressed cache entry", async () => {
