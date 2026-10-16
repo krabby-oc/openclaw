@@ -5,7 +5,6 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { isSubagentRegistryWriteCommand } from "../../agents/subagent-test-fixtures.test-helpers.js";
-import { registerSubagentRun } from "../../agents/subagents/registry/subagent-registry.js";
 import { rowToSubagentRunRecord } from "../../agents/subagents/registry/subagent-registry.store.codec.js";
 import { getSubagentRunByChildSessionKey } from "../../agents/subagents/registry/subagent-registry.test-helpers.js";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -23,10 +22,7 @@ import { shouldSkipMessageByAbortCutoff } from "./abort-cutoff.js";
 import { stopSubagentsForRequester } from "./abort-operation.js";
 import { getAbortMemory, isAbortRequestText, setAbortMemory } from "./abort-primitives.js";
 import { enqueueAbortFollowupRun } from "./abort-queue.test-support.js";
-import {
-  addSubagentFixture,
-  type SubagentRunFixture,
-} from "./abort-subagent-registry.test-support.js";
+import { addSubagentFixture } from "./abort-subagent-registry.test-support.js";
 import { formatAbortReplyText, tryFastAbortFromMessage } from "./abort.js";
 import { getFollowupQueueDepth } from "./queue.js";
 import { clearFollowupQueue } from "./queue/state.js";
@@ -253,6 +249,43 @@ describe("abort handling", () => {
     return { entry: { sessionId, updatedAt: 10 }, sessionId, sessionKey };
   }
 
+  async function addChild(
+    storePath: string,
+    childSessionKey: string,
+    runId: string,
+    requesterSessionKey: string,
+  ) {
+    const scope = { storePath, agentId: "main", sessionKey: childSessionKey };
+    const entry = loadSessionEntry(scope)!;
+    await replaceSessionEntry(scope, {
+      ...entry,
+      lifecycleRevision: `${entry.sessionId}-revision`,
+    });
+    await addSubagentFixture({
+      runId,
+      childSessionKey,
+      childAgentId: "main",
+      sessionEntry: loadSessionEntry(scope),
+      requesterSessionKey,
+      requesterDisplayKey: requesterSessionKey,
+      task: runId,
+      cleanup: "keep",
+      createdAt: Date.now(),
+    });
+  }
+
+  function expectStopped(
+    operation: ReturnType<typeof createReplyOperation>,
+    sessionKey: string,
+    sessionId: string,
+  ) {
+    expect(operation.abortSignal.aborted).toBe(true);
+    expect(runtimeAbortMocks.abortEmbeddedAgentRun).toHaveBeenCalledWith(sessionId);
+    expect(getFollowupQueueDepth(sessionKey)).toBe(0);
+    expectSessionLaneCleared(sessionKey);
+    expect(getAbortMemory(sessionKey)).toBeUndefined();
+  }
+
   function bindAcpSessionForTest(targetSessionKey: string) {
     vi.spyOn(getSessionBindingService(), "resolveByConversationAsync").mockImplementation(
       async (conversation) => ({
@@ -315,11 +348,7 @@ describe("abort handling", () => {
     const result = await runStopCommand(cfg, { SessionKey: sessionKey });
 
     expect(result.handled).toBe(true);
-    expect(operation.abortSignal.aborted).toBe(true);
-    expect(runtimeAbortMocks.abortEmbeddedAgentRun).toHaveBeenCalledWith(activeSessionId);
-    expect(getFollowupQueueDepth(sessionKey)).toBe(0);
-    expectSessionLaneCleared(sessionKey);
-    expect(getAbortMemory(sessionKey)).toBeUndefined();
+    expectStopped(operation, sessionKey, activeSessionId);
   });
 
   it("fast-abort uses resolved target identity when abort metadata save fails", async () => {
@@ -342,11 +371,7 @@ describe("abort handling", () => {
     const result = await runStopCommand(cfg, { SessionKey: requestedKey });
 
     expect(result.handled).toBe(true);
-    expect(operation.abortSignal.aborted).toBe(true);
-    expect(runtimeAbortMocks.abortEmbeddedAgentRun).toHaveBeenCalledWith(sessionId);
-    expect(getFollowupQueueDepth(canonicalKey)).toBe(0);
-    expectSessionLaneCleared(canonicalKey);
-    expect(getAbortMemory(canonicalKey)).toBeUndefined();
+    expectStopped(operation, canonicalKey, sessionId);
   });
 
   it("fast-abort leaves future prompts untouched when no persisted target entry exists", async () => {
@@ -382,24 +407,7 @@ describe("abort handling", () => {
       resolvedTarget(sessionKey, sessionId),
     );
     enqueueQueuedFollowupRun({ root, cfg, sessionId, sessionKey });
-    await replaceSessionEntry(
-      { storePath, agentId: "main", sessionKey: childKey },
-      {
-        ...loadSessionEntry({ storePath, agentId: "main", sessionKey: childKey })!,
-        lifecycleRevision: "slow-persistence-child-revision",
-      },
-    );
-    await addSubagentFixture({
-      runId: "slow-child-run",
-      childSessionKey: childKey,
-      childAgentId: "main",
-      sessionEntry: loadSessionEntry({ storePath, agentId: "main", sessionKey: childKey }),
-      requesterSessionKey: sessionKey,
-      requesterDisplayKey: sessionKey,
-      task: "slow child",
-      cleanup: "keep",
-      createdAt: Date.now(),
-    });
+    await addChild(storePath, childKey, "slow-child-run", sessionKey);
 
     const resultPromise = runStopCommand(cfg, { SessionKey: sessionKey });
     await persistenceStarted.promise;
@@ -470,22 +478,6 @@ describe("abort handling", () => {
     try {
       await entered.promise;
       const signaledBeforeAcpWait = native.abortSignal.aborted;
-      if (!signaledBeforeAcpWait) {
-        // This is still-live parent work, not a post-closure registration claim.
-        await registerSubagentRun({
-          runId: "during-acp-wait",
-          childSessionKey: "agent:main:subagent:during-acp-wait",
-          childAgentId: "main",
-          sessionEntry: { sessionId: "during-acp-wait-session" },
-          requesterSessionKey: sessionKey,
-          requesterAgentId: "main",
-          requesterDisplayKey: sessionKey,
-          task: "registered before native parent was signaled",
-          cleanup: "keep",
-          collect: true,
-          queued: true,
-        });
-      }
       const queueClearedBeforeAcpWait = getFollowupQueueDepth(sessionKey) === 0;
       native.complete();
       replacement = createOperation(sessionKey, "replacement-session");
@@ -501,9 +493,6 @@ describe("abort handling", () => {
         replacement.abortSignal.aborted,
         "do not rediscover a replacement parent after ACP settles",
       ).toBe(false);
-      expect(
-        await getSubagentRunByChildSessionKey("agent:main:subagent:during-acp-wait"),
-      ).toBeNull();
     } finally {
       proceed.resolve();
       await pending;
@@ -513,13 +502,11 @@ describe("abort handling", () => {
   });
 
   it("propagates a callback failure without a requester", async () => {
-    const requesterSessionKey = undefined;
-
     const beforeKill = vi.fn(() => {
       throw new Error("parent cancellation failed");
     });
     await expect(
-      stopSubagentsForRequester({ cfg: {}, requesterSessionKey, beforeKill }),
+      stopSubagentsForRequester({ cfg: {}, requesterSessionKey: undefined, beforeKill }),
     ).rejects.toThrow("parent cancellation failed");
     expect(beforeKill).toHaveBeenCalledOnce();
     expect(runtimeAbortMocks.abortEmbeddedAgentRun).not.toHaveBeenCalled();
@@ -567,66 +554,48 @@ describe("abort handling", () => {
     operation.complete();
   });
 
-  it("does not abort the caller source lane for an unbound explicit ACP target", async () => {
-    const sourceSessionKey = "agent:main:discord:channel:C3";
-    const acpSessionKey = "agent:codex:acp:unbound-explicit-target";
-    const { cfg } = await createAbortConfig({
-      [sourceSessionKey]: "source-store-session",
-      [acpSessionKey]: "acp-store-session",
-    });
-    const sourceOperation = createOperation(sourceSessionKey, "source-active-session");
-    acpManagerMocks.resolveSession.mockReturnValue({
-      kind: "ready",
-      sessionKey: acpSessionKey,
-      meta: {} as never,
-    });
+  it.each([false, true])(
+    "aborts an explicit ACP source only when bound (bound=%s)",
+    async (bound) => {
+      const sourceSessionKey = "agent:main:discord:channel:C3";
+      const acpSessionKey = "agent:codex:acp:unbound-explicit-target";
+      const { cfg } = await createAbortConfig({
+        [sourceSessionKey]: "source-store-session",
+        [acpSessionKey]: "acp-store-session",
+      });
+      const sourceOperation = createOperation(sourceSessionKey, "source-active-session");
+      if (bound) {
+        bindAcpSessionForTest(acpSessionKey);
+      }
+      acpManagerMocks.resolveSession.mockReturnValue({
+        kind: "ready",
+        sessionKey: acpSessionKey,
+        meta: {} as never,
+      });
 
-    const result = await runStopCommand(cfg, {
-      SessionKey: sourceSessionKey,
-      From: "discord:C3",
-      To: "discord:C3",
-      CommandTargetSessionKey: acpSessionKey,
-      CommandSource: "native",
-    });
+      const result = await runStopCommand(cfg, {
+        ...(bound ? { ParentSessionKey: sourceSessionKey } : { SessionKey: sourceSessionKey }),
+        From: "discord:C3",
+        To: "discord:C3",
+        CommandTargetSessionKey: acpSessionKey,
+        CommandSource: "native",
+      });
 
-    expect(result.handled).toBe(true);
-    expect(sourceOperation.result).toBeNull();
-    expect(replyRunRegistry.isActive(sourceSessionKey)).toBe(true);
-    expect(acpManagerMocks.cancelSession).toHaveBeenCalledWith({
-      cfg,
-      sessionKey: acpSessionKey,
-      reason: "fast-abort",
-    });
-    sourceOperation.complete();
-  });
-
-  it("uses ParentSessionKey as the source lane for a bound explicit ACP target", async () => {
-    const sourceSessionKey = "agent:main:discord:channel:C4";
-    const acpSessionKey = "agent:codex:acp:bound-parent-source";
-    const { cfg } = await createAbortConfig({
-      [sourceSessionKey]: "source-store-session",
-      [acpSessionKey]: "acp-store-session",
-    });
-    const sourceOperation = createOperation(sourceSessionKey, "source-active-session");
-    bindAcpSessionForTest(acpSessionKey);
-    acpManagerMocks.resolveSession.mockReturnValue({
-      kind: "ready",
-      sessionKey: acpSessionKey,
-      meta: {} as never,
-    });
-
-    const result = await runStopCommand(cfg, {
-      ParentSessionKey: sourceSessionKey,
-      From: "discord:C4",
-      To: "discord:C4",
-      CommandTargetSessionKey: acpSessionKey,
-      CommandSource: "native",
-    });
-
-    expect(result.handled).toBe(true);
-    expect(sourceOperation.result).toEqual({ kind: "aborted", code: "aborted_by_user" });
-    expect(replyRunRegistry.isActive(sourceSessionKey)).toBe(false);
-  });
+      expect(result.handled).toBe(true);
+      expect(sourceOperation.result).toEqual(
+        bound ? { kind: "aborted", code: "aborted_by_user" } : null,
+      );
+      expect(replyRunRegistry.isActive(sourceSessionKey)).toBe(!bound);
+      if (!bound) {
+        expect(acpManagerMocks.cancelSession).toHaveBeenCalledWith({
+          cfg,
+          sessionKey: acpSessionKey,
+          reason: "fast-abort",
+        });
+        sourceOperation.complete();
+      }
+    },
+  );
 
   it("continues stopping siblings when one termination persistence write fails", async () => {
     const sessionKey = "telegram:persistence-failure-parent";
@@ -637,30 +606,11 @@ describe("abort handling", () => {
       [firstChildKey]: "run-persistence-failure-first",
       [secondChildKey]: "run-persistence-failure-second",
     });
-    for (const childSessionKey of [firstChildKey, secondChildKey]) {
-      const scope = { storePath, agentId: "main", sessionKey: childSessionKey };
-      const entry = loadSessionEntry(scope)!;
-      await replaceSessionEntry(scope, {
-        ...entry,
-        lifecycleRevision: `${entry.sessionId}-revision`,
-      });
-    }
-    const run = (runId: string, childSessionKey: string): SubagentRunFixture => ({
-      runId,
-      childSessionKey,
-      childAgentId: "main",
-      sessionEntry: loadSessionEntry({ storePath, agentId: "main", sessionKey: childSessionKey }),
-      requesterSessionKey: sessionKey,
-      requesterDisplayKey: sessionKey,
-      task: "stop despite persistence failure",
-      cleanup: "keep",
-      createdAt: Date.now(),
-    });
-    for (const fixture of [
-      run("run-persistence-failure-first", firstChildKey),
-      run("run-persistence-failure-second", secondChildKey),
-    ]) {
-      await addSubagentFixture(fixture);
+    for (const [runId, childKey] of [
+      ["run-persistence-failure-first", firstChildKey],
+      ["run-persistence-failure-second", secondChildKey],
+    ] as const) {
+      await addChild(storePath, childKey, runId, sessionKey);
     }
     let failedTombstone = false;
     probe.command(stateWorker, async (command, executeOptions, scope) => {

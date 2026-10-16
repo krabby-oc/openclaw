@@ -55,8 +55,8 @@ import { createTestGatewayScheduler } from "../../test-utils/gateway-scheduler-c
 import { executeFastAbortRequest } from "./abort-operation.js";
 import { tryFastAbortFromMessage } from "./abort.js";
 import { handleStopCommand } from "./commands-session-abort.js";
+import { buildSessionCommandTestParams } from "./commands-session-params.test-support.js";
 import type { HandleCommandsParams } from "./commands-types.js";
-import { parseInlineSessionDirectives } from "./directive-handling.parse.js";
 import { enqueueFollowupRun, getFollowupQueueDepth } from "./queue.js";
 import { createQueueTestRun } from "./queue.test-helpers.js";
 import { clearFollowupDrainCallback } from "./queue/drain.js";
@@ -96,6 +96,7 @@ afterEach(() => {
 async function setupStop(createEntry = true) {
   const root = await dirs.make("case");
   const storePath = path.join(root, "sessions.json");
+  const scope = { storePath, sessionKey };
   const cfg = { session: { store: storePath }, commands: { allowFrom: { "*": ["*"] } } };
   setRuntimeConfigSnapshot(cfg);
   const entry = { sessionId: "session-a", updatedAt: Date.now() };
@@ -119,10 +120,8 @@ async function setupStop(createEntry = true) {
   });
   const isCommandTargetCurrent = () =>
     loadSessionEntry({ storePath, sessionKey })?.sessionId === entry.sessionId;
-  const params: HandleCommandsParams = {
-    cfg,
-    ctx,
-    command: {
+  const params = buildSessionCommandTestParams(
+    {
       commandBodyNormalized: "/stop",
       rawBodyNormalized: "/stop",
       isAuthorizedSender: true,
@@ -132,24 +131,16 @@ async function setupStop(createEntry = true) {
       surface: "slack",
       ownerList: [],
     },
-    agentId: "main",
-    directives: parseInlineSessionDirectives(""),
-    elevated: { enabled: false, allowed: false, failures: [] },
-    sessionKey: ctx.SessionKey ?? "",
-    sessionStore: createEntry ? { [sessionKey]: entry } : {},
-    storePath,
-    workspaceDir: root,
-    defaultGroupActivation: () => "always",
-    resolvedVerboseLevel: "off",
-    resolvedReasoningLevel: "off",
-    resolvedBlockStreamingBreak: "text_end",
-    resolveDefaultThinkingLevel: async () => undefined,
-    provider: "openai",
-    model: "gpt-test",
-    contextTokens: 1000,
-    isGroup: true,
-    opts: { isCommandTargetCurrent },
-  };
+    {
+      cfg,
+      ctx,
+      sessionKey: ctx.SessionKey ?? "",
+      sessionStore: createEntry ? { [sessionKey]: entry } : {},
+      storePath,
+      workspaceDir: root,
+      opts: { isCommandTargetCurrent },
+    },
+  );
   return {
     cfg,
     ctx,
@@ -157,7 +148,12 @@ async function setupStop(createEntry = true) {
     params,
     storePath,
     isCommandTargetCurrent,
-    readEntry: () => loadSessionEntry({ storePath, sessionKey }),
+    scope,
+    readEntry: () => loadSessionEntry(scope),
+    setCurrent(check: typeof isCommandTargetCurrent) {
+      this.isCommandTargetCurrent = check;
+      params.opts = { isCommandTargetCurrent: check };
+    },
   };
 }
 
@@ -209,6 +205,13 @@ it.each([false, true])(
 describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) => {
   const stop = (state: Awaited<ReturnType<typeof setupStop>>) =>
     pathKind === "fast" ? tryFastAbortFromMessage(state) : handleStopCommand(state.params, true);
+  const stopCurrent = (
+    state: Awaited<ReturnType<typeof setupStop>>,
+    isCommandTargetCurrent: NonNullable<HandleCommandsParams["opts"]>["isCommandTargetCurrent"],
+  ) =>
+    pathKind === "fast"
+      ? tryFastAbortFromMessage({ ...state, isCommandTargetCurrent })
+      : handleStopCommand({ ...state.params, opts: { isCommandTargetCurrent } }, true);
   const stoppedResult = (aborted = true) =>
     pathKind === "fast"
       ? { handled: true, aborted }
@@ -308,8 +311,7 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
           });
           operation.setPhase("running");
         }
-        expect(ordinaryCommand.exited).toBe(false);
-        expect(independentService.exited).toBe(false);
+        expect([ordinaryCommand.exited, independentService.exited]).toEqual([false, false]);
 
         if (phase === "cleanup-error") {
           const childKey = `agent:main:subagent:${childRunId}`;
@@ -374,29 +376,20 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
         >["isCommandTargetCurrent"] = () => false;
         if (phase === "running") {
           const current = await captureSessionEntryCurrentCheckAsync({
+            ...state.scope,
             agentId: "main",
-            storePath: state.storePath,
-            sessionKey,
           });
           staleCurrent = Object.assign(async () => false, {
             sessionSource: current.source,
           });
         }
-        await expect(
-          pathKind === "fast"
-            ? tryFastAbortFromMessage({ ...state, isCommandTargetCurrent: staleCurrent })
-            : handleStopCommand(
-                { ...state.params, opts: { isCommandTargetCurrent: staleCurrent } },
-                true,
-              ),
-        ).rejects.toThrow("selected session changed");
+        await expect(stopCurrent(state, staleCurrent)).rejects.toThrow("selected session changed");
         expect(ordinaryCommand.cancellationRequested).not.toBe(true);
         expect(child?.abortSignal.aborted).not.toBe(true);
         if (pathKind === "fast" && phase === "backend-error") {
           const writerEntered = createDeferred();
           writer = patchSessionEntry({
-            storePath: state.storePath,
-            sessionKey,
+            ...state.scope,
             update: async () => {
               writerEntered.resolve();
               await releaseWriter.promise;
@@ -521,10 +514,10 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
         original?.complete();
         start({ ...target, runId: "during-preparation" });
         if (backend === "new-session") {
-          replaceSessionEntrySync(
-            { storePath: state.storePath, sessionKey },
-            { ...state.entry, activeWriterRunId: "later-human" },
-          );
+          replaceSessionEntrySync(state.scope, {
+            ...state.entry,
+            activeWriterRunId: "later-human",
+          });
         }
         if (backend !== "embedded") {
           replacement = operationFor({ agentId: "main" });
@@ -658,13 +651,15 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
         threadId: "123.456",
       },
     });
-    await replaceSessionEntry(
-      { storePath: state.storePath, sessionKey },
-      { ...state.entry, updatedAt: 100, chatType: "group", delivery },
-    );
+    await replaceSessionEntry(state.scope, {
+      ...state.entry,
+      updatedAt: 100,
+      chatType: "group",
+      delivery,
+    });
     const operation = streamingOperation();
     let reassigned = false;
-    state.isCommandTargetCurrent = () => {
+    state.setCurrent(() => {
       const current = getConversationSession(address);
       if (
         !reassigned &&
@@ -681,14 +676,12 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
         });
       }
       return current?.sessionKey === sessionKey;
-    };
-    state.params.opts = { isCommandTargetCurrent: state.isCommandTargetCurrent };
+    });
     const failure = await stop(state).then(
       () => undefined,
       (error: unknown) => error,
     );
-    expect(operation.abortSignal.aborted).toBe(true);
-    expect(reassigned).toBe(true);
+    expect([operation.abortSignal.aborted, reassigned]).toEqual([true, true]);
     expect(getConversationSession(address)).toEqual({
       sessionKey: nextKey,
       sessionId: "session-b",
@@ -712,14 +705,11 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
         replacement === "session"
           ? { sessionId: "session-b" }
           : { activeWriterRunId: "later-writer", lifecycleRunId: "later-writer" };
-      const writer = patchSessionEntryCore(
-        { storePath: state.storePath, sessionKey, agentId: "main" },
-        async () => {
-          entered.resolve();
-          await release.promise;
-          return { ...nextOwner, updatedAt: Date.now() };
-        },
-      );
+      const writer = patchSessionEntryCore({ ...state.scope, agentId: "main" }, async () => {
+        entered.resolve();
+        await release.promise;
+        return { ...nextOwner, updatedAt: Date.now() };
+      });
       await entered.promise;
       const operation = streamingOperation();
       const aborted = createDeferred();
@@ -753,8 +743,7 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
   it("completes cancellation when its own abort releases the live publisher", async () => {
     const state = await setupStop();
     const operation = streamingOperation();
-    state.isCommandTargetCurrent = () => !operation.abortSignal.aborted;
-    state.params.opts = { isCommandTargetCurrent: state.isCommandTargetCurrent };
+    state.setCurrent(() => !operation.abortSignal.aborted);
     const result = await stop(state);
     expect(operation.abortSignal.aborted).toBe(true);
     expect(result).toMatchObject(
@@ -771,10 +760,7 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
     expect(state.isCommandTargetCurrent()).toBe(true);
     const pending = dispatch.promise.then(async () => stop(state));
     admitted.complete();
-    await replaceSessionEntry(
-      { storePath: state.storePath, sessionKey },
-      { sessionId: "session-b", updatedAt: Date.now() },
-    );
+    await replaceSessionEntry(state.scope, { sessionId: "session-b", updatedAt: Date.now() });
     const replacement = streamingOperation({ sessionId: "session-b" });
     enqueueFollowupRun(
       sessionKey,
