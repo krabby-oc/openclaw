@@ -15,7 +15,7 @@ import {
   normalizeAgentId,
 } from "../routing/session-key.js";
 import { hasErrnoCode } from "./errno.js";
-import { readDirectoryEntriesSync } from "./path-guards.js";
+import { readDirectoryEntriesSync } from "./path-existence.js";
 import type { SessionStoreAliasPlan } from "./state-migrations.types.js";
 
 type SessionStorePathRelationship = "same" | "different" | "unknown";

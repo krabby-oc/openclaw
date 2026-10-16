@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { canAccess, canAccessSync } from "./path-guards.js";
+import { canAccess, canAccessSync } from "./path-existence.js";
 
 const LSOF_CANDIDATES =
   process.platform === "darwin"

@@ -17,7 +17,7 @@ import {
   readJsonIfExists,
   resolvePairingPaths,
 } from "./pairing-files.js";
-import { canAccess } from "./path-guards.js";
+import { canAccess } from "./path-existence.js";
 
 type LegacyDevicePairingMigrationResult = {
   imported: number;

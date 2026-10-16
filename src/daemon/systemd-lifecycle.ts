@@ -1,7 +1,7 @@
 /** systemd start, stop, restart, and obsolete-unit removal. */
 import fs from "node:fs/promises";
 import { hasErrnoCode } from "../infra/errno.js";
-import { canAccess } from "../infra/path-guards.js";
+import { canAccess } from "../infra/path-existence.js";
 import { LEGACY_GATEWAY_SYSTEMD_SERVICE_NAMES } from "./constants.js";
 import { formatLine } from "./output.js";
 import { createGatewayLifecycleMutationReporter } from "./service-mutation.js";

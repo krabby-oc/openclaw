@@ -6,7 +6,7 @@ import { isRecord as hasRecord } from "@openclaw/normalization-core/record-coerc
 import { normalizeOptionalLowercaseString as normalizeString } from "@openclaw/normalization-core/string-coerce";
 import { collectConfiguredAgentHarnessRuntimes } from "../../../agents/harness-runtimes.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { canAccess, safeStat } from "../../../infra/path-guards.js";
+import { canAccess, safeStat } from "../../../infra/path-existence.js";
 
 type CodexNativeAssetHit = {
   /** Native Codex asset category discovered under Codex or personal agent homes. */

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { escapeRegExp } from "../shared/regexp.js";
-import { canAccessSync } from "./path-guards.js";
+import { canAccessSync } from "./path-existence.js";
 import { resolveDiagnosticProcessEnv } from "./process-env.js";
 import { assertAppContainerSpawnSupported } from "./windows-appcontainer-spawn.js";
 

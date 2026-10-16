@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { readPackageManagerSpec } from "./package-json.js";
-import { canAccess } from "./path-guards.js";
+import { canAccess } from "./path-existence.js";
 
 type DetectedPackageManager = "pnpm" | "bun" | "npm";
 

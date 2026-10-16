@@ -7,7 +7,8 @@ import {
 } from "@openclaw/normalization-core/string-normalization";
 import { resolveBrewPathDirs } from "./brew.js";
 import { isTruthyEnvValue } from "./env.js";
-import { canAccessSync, isPathInside, safeStatSync } from "./path-guards.js";
+import { canAccessSync } from "./path-existence.js";
+import { isPathInside, safeStatSync } from "./path-guards.js";
 import { tryProcessCwd } from "./safe-cwd.js";
 
 type EnsureOpenClawPathOpts = {

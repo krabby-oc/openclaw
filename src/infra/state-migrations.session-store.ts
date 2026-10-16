@@ -38,7 +38,8 @@ import {
   resolveDeferredPluginSessionStoreSource,
 } from "./deferred-plugin-session-sources.js";
 import { expandHomePrefix } from "./home-dir.js";
-import { readDirectoryEntriesSync, safeStatSync } from "./path-guards.js";
+import { readDirectoryEntriesSync } from "./path-existence.js";
+import { safeStatSync } from "./path-guards.js";
 import { importLegacyAcpSessionMetadata } from "./state-migrations.acp-session-metadata.js";
 import {
   parseSessionStoreJson5,

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { isContainerEnvironment } from "./container-environment.js";
 import { readPackageName } from "./package-json.js";
-import { canAccess, safeStat } from "./path-guards.js";
+import { canAccess, safeStat } from "./path-existence.js";
 import { detectGlobalInstallManagerForRoot } from "./update-global.js";
 import type { UpdateInstallKind } from "./update-install-kind.js";
 import { UPDATE_RUNNER_TIMEOUT_MS } from "./update-run-timeouts.js";

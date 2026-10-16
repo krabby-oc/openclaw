@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { canAccessSync } from "./path-guards.js";
+import { canAccessSync } from "./path-existence.js";
 
 type BrewResolutionOptions = {
   homeDir?: string;

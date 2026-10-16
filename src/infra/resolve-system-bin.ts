@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pruneMapToMaxSize } from "./map-size.js";
-import { canAccessSync } from "./path-guards.js";
+import { canAccessSync } from "./path-existence.js";
 import { getWindowsInstallRoots, getWindowsProgramFilesRoots } from "./windows-install-roots.js";
 
 /** Standard trust appends local-admin/package-manager paths after strict system paths. */

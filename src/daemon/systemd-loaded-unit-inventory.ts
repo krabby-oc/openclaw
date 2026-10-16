@@ -1,6 +1,6 @@
 /** Read loaded service commands without loading units or reading their environment files. */
 import path from "node:path";
-import { pathEntryExists } from "../infra/path-guards.js";
+import { pathEntryExists } from "../infra/path-existence.js";
 import { classifyGatewayCommand } from "./inspect-markers.js";
 import { withServiceInspectionBudget } from "./service-inspection-budget.js";
 import type { GatewayServiceEnv } from "./service-types.js";

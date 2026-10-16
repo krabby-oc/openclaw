@@ -1,7 +1,7 @@
 import path from "node:path";
 import { normalizeTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
-import { canAccess } from "./path-guards.js";
+import { canAccess } from "./path-existence.js";
 
 type PluginInstallPathIssue = {
   kind: "custom-path" | "missing-path";

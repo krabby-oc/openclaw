@@ -5,7 +5,7 @@ import { hasErrnoCode, isMissingPathError } from "./errno.js";
 import { root as openFsRoot } from "./fs-safe.js";
 import type { PackageDistContentInventoryEntry } from "./package-dist-inventory.js";
 
-export { pathEntryExists as packageRootExists } from "./path-guards.js";
+export { pathEntryExists as packageRootExists } from "./path-existence.js";
 
 export type LocalOverridePackageRoot = Awaited<ReturnType<typeof openFsRoot>>;
 

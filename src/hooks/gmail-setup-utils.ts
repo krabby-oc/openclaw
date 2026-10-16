@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { formatErrorMessage } from "../infra/errors.js";
 import { resolveExecutable } from "../infra/executable-path.js";
-import { canAccessSync } from "../infra/path-guards.js";
+import { canAccessSync } from "../infra/path-existence.js";
 import { formatCommandOutput, formatCommandResult } from "../process/command-error.js";
 import { runCommandWithTimeout, type SpawnResult } from "../process/exec.js";
 import { hasBinary } from "../skills/loading/config.js";
