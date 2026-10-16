@@ -223,7 +223,6 @@ describe("active worker placement disk-space monitoring", () => {
         ownerEpoch: 7,
         authorize: expect.any(Function),
       });
-      expect(harness.monitor.version()).toBe(1);
       expect(events).toEqual([]);
 
       availableBytes = 400 * MIB;
@@ -233,24 +232,21 @@ describe("active worker placement disk-space monitoring", () => {
       expect(events).toEqual([
         { reason: "worker-disk-space", sessionKey: "agent:main:session-disk", agentId: "main" },
       ]);
-      expect(harness.monitor.version()).toBe(2);
 
       availableBytes = 300 * MIB;
       harness.advanceTime(15 * 60_000);
       await harness.monitor.sweep();
       expect(harness.monitor.read(harness.placement)?.availableBytes).toBe(300 * MIB);
       expect(events).toHaveLength(1);
-      expect(harness.monitor.version()).toBe(3);
 
       await harness.monitor.sweep();
-      expect(harness.monitor.version()).toBe(3);
+      expect(commands).toHaveLength(3);
 
       availableBytes = 6 * GIB;
       harness.advanceTime(15 * 60_000);
       await harness.monitor.sweep();
       expect(harness.monitor.read(harness.placement)?.status).toBe("ok");
       expect(events).toHaveLength(2);
-      expect(harness.monitor.version()).toBe(4);
     } finally {
       unsubscribe();
     }
@@ -271,21 +267,19 @@ describe("active worker placement disk-space monitoring", () => {
     expect(harness.monitor.read(harness.placement)?.status).toBe(sample.status);
   });
 
-  it("advances the projection fence when an observation loses its active placement", async () => {
+  it("stops probing when an observation loses its active placement", async () => {
     const harness = createHarness(async () => result(6 * GIB, 10 * GIB));
 
     await harness.monitor.sweep();
-    expect(harness.monitor.version()).toBe(1);
 
     harness.setPlacement({ ...activePlacement(), state: "draining" });
     await harness.monitor.sweep();
     expect(harness.monitor.nextSweepAtMs()).toBe(Infinity);
 
     expect(harness.monitor.read(harness.placement)).toBeUndefined();
-    expect(harness.monitor.version()).toBe(2);
 
     await harness.monitor.sweep();
-    expect(harness.monitor.version()).toBe(2);
+    expect(harness.startTunnel).toHaveBeenCalledTimes(1);
   });
 
   it("probes and warns once per stale worker build binding", async () => {
@@ -324,7 +318,6 @@ describe("active worker placement disk-space monitoring", () => {
 
       expect(harness.startTunnel).toHaveBeenCalledTimes(1);
       expect(harness.monitor.read(harness.placement)).toEqual(previous);
-      expect(harness.monitor.version()).toBe(1);
 
       harness.setRunnerStatus("available");
       await harness.monitor.sweep();
@@ -334,7 +327,6 @@ describe("active worker placement disk-space monitoring", () => {
         status: "ok",
         availableBytes,
       });
-      expect(harness.monitor.version()).toBe(2);
       expect(harness.warn).not.toHaveBeenCalled();
     },
   );
@@ -358,7 +350,6 @@ describe("active worker placement disk-space monitoring", () => {
     await harness.monitor.sweep();
 
     expect(harness.monitor.read(harness.placement)?.status).toBe("warning");
-    expect(harness.monitor.version()).toBe(1);
     expect(harness.warn).toHaveBeenCalledTimes(2);
     expect(harness.warn).toHaveBeenCalledWith(
       expect.stringContaining("Worker disk-space check command failed"),

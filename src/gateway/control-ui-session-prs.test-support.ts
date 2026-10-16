@@ -4,6 +4,7 @@ import { afterEach, beforeEach, vi } from "vitest";
 import { getRuntimeConfig } from "../config/io.js";
 import { setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import {
+  loadSessionEntryReadOnly,
   replaceSessionEntrySync,
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
@@ -17,7 +18,10 @@ import { resolveControlUiSessionPrTarget } from "./control-ui-session-pr-read.js
 import { withControlUiSessionPrSource } from "./control-ui-session-pr-source.js";
 import { loadControlUiSessionPullRequests } from "./control-ui-session-prs.js";
 import { resolveRequestedSessionAgentId } from "./session-request-agent.js";
-import { prepareSessionMutationFacts } from "./session-sharing-preparation.js";
+import {
+  captureSessionMutationRouting,
+  prepareSessionMutationFacts,
+} from "./session-sharing-preparation.js";
 import { resolveSessionStoreKey } from "./session-store-key.js";
 import { loadGatewaySessionEntryReadOnlyAsync } from "./session-utils-store.js";
 
@@ -131,10 +135,8 @@ async function prepareTestSessionPrTarget(params: { sessionKey: string; agentId?
   const prepared = initial.entry?.repositoryWorkspaceId
     ? await getSessionRepositoryWorkspaceStore().prepare(initial.entry.repositoryWorkspaceId)
     : undefined;
-  return async () => {
-    const selected = await loadGatewaySessionEntryReadOnlyAsync(params.sessionKey, {
-      agentId: params.agentId,
-    });
+  const assertRoutingCurrent = captureSessionMutationRouting(initial.cfg, undefined, [params]);
+  const resolveTarget = (selected: typeof initial) => {
     const repository = prepared?.current();
     return resolveControlUiSessionPrTarget(
       selected,
@@ -144,6 +146,30 @@ async function prepareTestSessionPrTarget(params: { sessionKey: string; agentId?
         ? repository
         : null,
     );
+  };
+  return async () => {
+    const selected = await loadGatewaySessionEntryReadOnlyAsync(params.sessionKey, {
+      agentId: params.agentId,
+    });
+    const target = resolveTarget(selected);
+    return target
+      ? {
+          ...target,
+          assertCurrent() {
+            const cfg = getRuntimeConfig();
+            assertRoutingCurrent(cfg);
+            // This storage fixture has no row projection; check its real selected row at effect.
+            const entry = loadSessionEntryReadOnly({
+              agentId: selected.agentId,
+              storePath: selected.storePath,
+              sessionKey: selected.canonicalKey,
+            });
+            if (resolveTarget({ ...selected, cfg, entry })?.identity !== target.identity) {
+              throw new Error("Session pull-request target changed");
+            }
+          },
+        }
+      : undefined;
   };
 }
 

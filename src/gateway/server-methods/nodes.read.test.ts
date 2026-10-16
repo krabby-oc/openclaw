@@ -155,6 +155,9 @@ describe("node read projections", () => {
       const stats = await read();
       expect(stats).not.toBe(initial);
       expect(stats.hostStats).toMatchObject({ memoryFreeBytes: 4096, updatedAtMs: 100 });
+      expect(Object.isFrozen(stats.hostStats)).toBe(true);
+      expect(() => Object.assign(stats.hostStats!, { memoryFreeBytes: 0 })).toThrow(TypeError);
+      expect(registry.get(paired.deviceId)?.hostStats?.memoryFreeBytes).toBe(4096);
       expect(initial.hostStats).toBeUndefined();
       expect(await read()).toBe(stats);
 

@@ -625,15 +625,8 @@ export async function recoverPendingWorkspaceResults(
                 await prepareAcceptedPublication(deps, turnClaim);
                 assertPreservedEnvironment();
                 await placements.acceptWorkspaceResult(turnClaim, recovery.assertCurrent);
-                const recordedPending = (
-                  await placements.readProjection([turnClaim.sessionId], { current: true })
-                ).pendingResults.get(turnClaim.sessionId);
                 const recordedStagedResultRef =
-                  recordedPending?.sessionId === turnClaim.sessionId &&
-                  recordedPending.claimId === turnClaim.claimId &&
-                  recordedPending.runId === turnClaim.runId
-                    ? recordedPending.stagedResultRef
-                    : undefined;
+                  placements.preparedWorkspaceResult(turnClaim)?.stagedResultRef;
                 const conflictPaths = applied?.conflictPaths ?? [];
                 if (conflictPaths.length > 0 && !recordedStagedResultRef) {
                   throw new Error(

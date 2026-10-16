@@ -81,6 +81,7 @@ describe("worker placement result recovery", () => {
       const restarted = await createHarness(database, restartedStore, {
         workspacePath,
         reconcileFailureCount: 1,
+        reconcileConflictPaths: ["src/local.ts"],
       });
       restarted.markEnvironmentOwnerEpoch(active.activeOwnerEpoch);
       await restarted.service.reconcile("startup");
@@ -94,8 +95,21 @@ describe("worker placement result recovery", () => {
         state: "reclaimed",
         turnClaim: null,
         workspaceBaseManifestRef: restarted.reconciledManifestRef,
+        workspaceResultConflict: {
+          paths: ["src/local.ts"],
+          stagedResultRef: expect.stringMatching(/^refs\/openclaw\/worker-results\/reclaim-/u),
+          totalCount: 1,
+        },
       });
       expect(await restartedStore.listPendingWorkspaceResultsAsync()).toEqual([]);
+      expect(restarted.reportWorkspaceResultConflict).toHaveBeenCalledWith({
+        sessionId: REQUEST.sessionId,
+        sessionKey: REQUEST.sessionKey,
+        agentId: REQUEST.agentId,
+        paths: ["src/local.ts"],
+        stagedResultRef: expect.stringMatching(/^refs\/openclaw\/worker-results\/reclaim-/u),
+        totalCount: 1,
+      });
       expect(restarted.environments.destroy).toHaveBeenCalledOnce();
       expect(restarted.log.indexOf("workspace:verify-local")).toBeLessThan(
         restarted.log.indexOf("teardown:destroy"),

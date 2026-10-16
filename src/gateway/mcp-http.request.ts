@@ -303,8 +303,7 @@ export function resolveMcpRequestContext(
   return {
     sessionKey: resolveScopedSessionKey(cfg, getHeader(req, "x-session-key")),
     sessionId: normalizeOptionalString(getHeader(req, "x-openclaw-session-id")),
-    messageProvider:
-      normalizeMessageChannel(getHeader(req, "x-openclaw-message-channel")) ?? undefined,
+    messageProvider: normalizeMessageChannel(getHeader(req, "x-openclaw-message-channel")),
     // The token-authenticated loopback client is gateway-spawned on 127.0.0.1. Caps only
     // widen tool availability; sender ownership remains derived from the bearer token.
     clientCaps: normalizeMcpClientCapsHeader(getHeader(req, "x-openclaw-client-caps")),

@@ -624,12 +624,12 @@ describe("worker node enrollment", () => {
       bootstrap.ensureDevicePairSetupBootstrapToken({ ...params, baseDir: root }),
     );
     const record = await createProvisioning();
-    const polledVersions: number[] = [];
+    const polledRecords: Array<ReturnType<typeof store.get>> = [];
     const manager = createManager({
       resolveAvailability: async (deviceId) => {
         expect(deviceId).toBe("paired-cloud-node");
-        polledVersions.push(store.inventoryVersion());
-        return { available: polledVersions.length === 3 };
+        polledRecords.push(store.get(record.environmentId));
+        return { available: polledRecords.length === 3 };
       },
     });
     const enrollment = await manager.begin(record);
@@ -637,11 +637,9 @@ describe("worker node enrollment", () => {
       throw new Error("Expected a fresh node enrollment");
     }
     const setup = decodePairingSetupCode(enrollment.setupCode);
-    const inventoryVersion = store.inventoryVersion();
     const pending = store.get(record.environmentId);
     const waiting = enrollment.waitForDeviceId();
     try {
-      expect(store.inventoryVersion()).toBe(inventoryVersion);
       expect(store.get(record.environmentId)).toEqual(pending);
 
       await bootstrap.verifyDeviceBootstrapToken({
@@ -663,12 +661,11 @@ describe("worker node enrollment", () => {
         nodeSetupId: enrollment.setupId,
         nodeDeviceId: "paired-cloud-node",
       });
-      const completedVersion = store.inventoryVersion();
-      expect(completedVersion).toBeGreaterThan(inventoryVersion);
+      const completed = store.get(record.environmentId);
 
       await expect(waiting).resolves.toBe("paired-cloud-node");
-      expect(polledVersions).toEqual([completedVersion, completedVersion, completedVersion]);
-      expect(store.inventoryVersion()).toBe(completedVersion);
+      expect(polledRecords).toEqual([completed, completed, completed]);
+      expect(store.get(record.environmentId)).toEqual(completed);
     } finally {
       manager.close(enrollment);
       await waiting.catch(() => undefined);

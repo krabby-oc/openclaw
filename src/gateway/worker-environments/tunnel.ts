@@ -50,7 +50,6 @@ export function createWorkerTunnelManager(options: WorkerTunnelManagerOptions = 
   });
   const entries = new Map<string, TunnelEntry>();
   const owners = new Set<TunnelEntry>();
-  const claimedOwnerEpochs = new Map<string, number>();
 
   const isCurrent = (entry: TunnelEntry) =>
     entries.get(entry.environmentId) === entry && !entry.abortController.signal.aborted;
@@ -101,18 +100,7 @@ export function createWorkerTunnelManager(options: WorkerTunnelManagerOptions = 
   };
 
   async function start(request: WorkerTunnelStartRequest): Promise<WorkerTunnelHandle> {
-    if (!request.environmentId.trim()) {
-      throw new Error("Worker tunnel environment id must be non-empty");
-    }
-    if (!Number.isSafeInteger(request.ownerEpoch) || request.ownerEpoch < 0) {
-      throw new Error("Worker tunnel owner epoch must be a non-negative safe integer");
-    }
     request.authorize?.();
-    const claimedEpoch = claimedOwnerEpochs.get(request.environmentId);
-    if (claimedEpoch !== undefined && request.ownerEpoch < claimedEpoch) {
-      throw new Error("Worker tunnel owner epoch is stale");
-    }
-    claimedOwnerEpochs.set(request.environmentId, request.ownerEpoch);
     const current = entries.get(request.environmentId);
     if (current?.ownerEpoch === request.ownerEpoch) {
       const handle = await current.initialization;

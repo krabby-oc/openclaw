@@ -321,9 +321,8 @@ export function createWorkerPlacementReclaim(options: WorkerPlacementReclaimOpti
                     }
                     assertCurrent();
                     await placements.acceptWorkspaceResult(reclaimClaim, reauthorize);
-                    const recordedStagedResultRef = (
-                      await findPendingWorkerWorkspaceResult(placements, reclaimClaim)
-                    )?.stagedResultRef;
+                    const recordedStagedResultRef =
+                      placements.preparedWorkspaceResult(reclaimClaim)?.stagedResultRef;
                     const conflictPaths = applied?.conflictPaths ?? [];
                     if (conflictPaths.length > 0 && !recordedStagedResultRef) {
                       throw new Error("Cloud worker stop conflict has no staged result reference");

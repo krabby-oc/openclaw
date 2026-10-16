@@ -210,7 +210,6 @@ export function resolveGatewaySessionStoreReadSources(params: GatewaySessionStor
     }
     return {
       sources: Object.fromEntries(sources),
-      isCurrent: () => isSameDatabasePath.isCurrent(),
     };
   });
 }

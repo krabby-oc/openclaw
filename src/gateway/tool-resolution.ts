@@ -402,7 +402,7 @@ export async function resolveGatewayScopedTools(
       ? [params.approvalReviewerDeviceId]
       : undefined,
     requesterAgentIdOverride: sessionAgentId,
-    agentChannel: params.messageProvider ?? undefined,
+    agentChannel: params.messageProvider,
     questionInputMode: resolveConversationQuestionInputMode({
       messageProvider: params.messageProvider,
     }),

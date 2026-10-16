@@ -1,6 +1,7 @@
 import type { Duplex } from "node:stream";
 import { NODE_WORKER_PORTAL_STREAM_COMMAND } from "../../infra/node-commands.js";
 import { NODE_WORKER_PORTAL_STREAM_VERSION } from "../../infra/node-runner-inventory.js";
+import { createDeferredCore } from "../../shared/deferred.js";
 import type { NodeDesktopStreamBroker } from "../desktop/node-stream-broker.js";
 import type {
   NodeWorkerSupervisorNodeProof,
@@ -19,6 +20,7 @@ type ActiveNodePortal = {
   binding: WorkerNodeCarrierBinding;
   controller: AbortController;
   streams: Set<ActiveNodePortalStream>;
+  closing?: Promise<void>;
 };
 
 type ActiveNodePortalStream = {
@@ -27,7 +29,6 @@ type ActiveNodePortalStream = {
   ticket?: ReturnType<NodeDesktopStreamBroker["mintPortal"]>;
   invocation?: ReturnType<NodeWorkerSupervisorTransport["invoke"]>;
   stream?: Duplex;
-  stopped: boolean;
 };
 
 const UNSUPPORTED_NODE_PORTAL_MESSAGE =
@@ -69,28 +70,31 @@ export function createWorkerNodePortalCarrier(options: {
   };
 
   const retireStream = (active: ActiveNodePortalStream): void => {
-    if (active.stopped) {
+    if (active.controller.signal.aborted) {
       return;
     }
-    active.stopped = true;
     active.ticket?.cancel();
     active.controller.abort(new Error("Worker environment node portal stream stopped"));
     active.stream?.destroy();
-    active.portal.streams.delete(active);
   };
 
   const stopStream = async (active: ActiveNodePortalStream): Promise<void> => {
     retireStream(active);
     await active.invocation?.catch(() => undefined);
+    active.portal.streams.delete(active);
   };
 
-  const closePortal = async (portal: ActiveNodePortal): Promise<void> => {
-    if (portal.controller.signal.aborted) {
-      return;
+  const closePortal = (portal: ActiveNodePortal): Promise<void> => {
+    if (!portal.closing) {
+      const closed = createDeferredCore();
+      // Publish the join before abort callbacks can request the same close.
+      portal.closing = closed.promise;
+      portal.controller.abort(new Error("Worker environment node portal owner stopped"));
+      void Promise.all([...portal.streams].map(stopStream))
+        .finally(() => activePortals.delete(portal))
+        .then(() => closed.resolve(), closed.reject);
     }
-    portal.controller.abort(new Error("Worker environment node portal owner stopped"));
-    activePortals.delete(portal);
-    await Promise.all([...portal.streams].map(stopStream));
+    return portal.closing;
   };
 
   const connectPortal = async (
@@ -108,7 +112,6 @@ export function createWorkerNodePortalCarrier(options: {
     const active: ActiveNodePortalStream = {
       portal,
       controller: new AbortController(),
-      stopped: false,
     };
     // Publish the connection before node discovery yields so owner teardown can fence it.
     portal.streams.add(active);
@@ -157,7 +160,12 @@ export function createWorkerNodePortalCarrier(options: {
         throw new Error("Worker environment node portal owner changed before attachment");
       }
       active.stream.once("close", () => retireStream(active));
-      void active.invocation.finally(() => retireStream(active)).catch(() => undefined);
+      void active.invocation
+        .finally(() => {
+          retireStream(active);
+          portal.streams.delete(active);
+        })
+        .catch(() => undefined);
       return active.stream;
     } catch (error) {
       await stopStream(active);

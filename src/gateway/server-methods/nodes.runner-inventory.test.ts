@@ -217,13 +217,6 @@ describe("nodeHandlers node.runnerInventory.update", () => {
     expect(catalog.workerBundleByNodeId).toEqual(
       new Map([["node-1", { status: "installed", version: "2026.8.9" }]]),
     );
-    const bundle = expectDefined(catalog.workerBundleByNodeId.get("node-1"), "projected bundle");
-    bundle.status = "missing";
-    expect(transport.getBundleStatus?.("node-1")?.status).toEqual({
-      status: "installed",
-      version: "2026.8.9",
-    });
-
     expect(
       runtime.nodeRegistry.updateSurface(
         "node-1",

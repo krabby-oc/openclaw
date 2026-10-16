@@ -18,6 +18,7 @@ export function createTestControlUiSessionPrSubscriptions(
         identity: JSON.stringify(session),
         readSource: { agentId: session.agentId ?? parsed?.agentId ?? "main", path: "unused" },
         source: null,
+        assertCurrent() {},
       };
       return async () => target;
     },

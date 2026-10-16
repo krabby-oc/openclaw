@@ -1,5 +1,10 @@
+import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../../test/helpers/promise.js";
+import {
+  awaitGateBeforeSettlement,
+  createDeferred,
+  withinTest,
+} from "../../../test/helpers/promise.js";
 import { NODE_WORKER_PORTAL_STREAM_COMMAND } from "../../infra/node-commands.js";
 import { NODE_WORKER_PORTAL_STREAM_VERSION } from "../../infra/node-runner-inventory.js";
 import type { NodeWorkerSupervisorNodeProof } from "../node-registry-private.js";
@@ -184,6 +189,88 @@ describe("worker node portal carrier", () => {
       "reconnect or update the worker node, then retry",
     );
   });
+
+  it.for(["stream close", "portal close"] as const)(
+    "joins admitted invocation settlement after %s",
+    async (retirement, { signal }) => {
+      const record = await support.seedReadyNodeDesktop("worker-node-portal-settlement");
+      const transport = pendingPortalTransport({
+        proof: portalNodeProof(record.nodeDeviceId!),
+        isProofCurrent: () => true,
+      });
+      const streamed = fakePortalBroker();
+      const carrier = createWorkerNodePortalCarrier({ store: support.testState.store });
+      carrier.bindRuntime({ transport: transport.transport, streamBroker: streamed.broker });
+      const portal = await carrier.open({
+        environmentId: record.environmentId,
+        ownerEpoch: record.ownerEpoch,
+        remotePort: 4321,
+      });
+      const invoked = createDeferred();
+      const canceled = createDeferred();
+      const finishInvocation = createDeferred();
+      const completionOrder: string[] = [];
+      const closes: Promise<void>[] = [];
+      let invocation: ReturnType<typeof transport.transport.invoke> | undefined;
+      const invoke = transport.invoke.getMockImplementation()!;
+      transport.invoke.mockImplementation((request) => {
+        const result = invoke(request);
+        invoked.resolve();
+        // Carrier-boundary proof: cancellation finishes in the synthetic transport,
+        // but its returned promise still owns local cleanup. This is not a remote ACK.
+        invocation = result.then(async (value) => {
+          canceled.resolve();
+          await finishInvocation.promise;
+          completionOrder.push("invocation");
+          return value;
+        });
+        return invocation;
+      });
+      try {
+        const connecting = portal.connect();
+        await withinTest(
+          awaitGateBeforeSettlement(
+            invoked.promise,
+            connecting,
+            "Portal connection settled before its invocation was admitted",
+          ),
+          signal,
+        );
+        const stream = streamed.attachNext();
+        await expect(connecting).resolves.toBe(stream);
+        if (retirement === "stream close") {
+          stream.destroy();
+        } else {
+          closes.push(
+            portal.close().then(() => {
+              completionOrder.push("first close");
+            }),
+          );
+        }
+        await withinTest(canceled.promise, signal);
+        expect(stream.destroyed).toBe(true);
+        closes.push(
+          portal.close().then(() => {
+            completionOrder.push("close");
+          }),
+          carrier.stopAll().then(() => {
+            completionOrder.push("stopAll");
+          }),
+        );
+        await setImmediate();
+        expect(completionOrder).toEqual([]);
+        await expect(portal.connect()).rejects.toThrow(
+          "reconnect or update the worker node, then retry",
+        );
+        finishInvocation.resolve();
+        await withinTest(Promise.all(closes), signal);
+        expect(completionOrder[0]).toBe("invocation");
+      } finally {
+        finishInvocation.resolve();
+        await Promise.allSettled([invocation, ...closes, portal.close(), carrier.stopAll()]);
+      }
+    },
+  );
 
   it.each([
     ["lease", (record: WorkerEnvironmentRecord) => ({ ...record, leaseId: "lease:replacement" })],

@@ -349,7 +349,6 @@ describe("worker environment service", () => {
     };
     expect(project(records[0]!)).not.toHaveProperty("machine");
     expect(project(records[1]!)).toMatchObject({ machine: { class: "standard", os: "os-b" } });
-    const coldVersion = workerService.machineShapeVersion();
     await workerService.listMachineOptions("development");
     expect(project(records[0]!)).toMatchObject({
       machine: { class: "standard", cpu: 32, memoryGb: 64 },
@@ -374,11 +373,6 @@ describe("worker environment service", () => {
     });
     expect(project(records[1]!)).not.toHaveProperty("machine.cpu");
     expect(project(records[2]!)).toMatchObject({ machine: { class: "custom", os: "other" } });
-    expect(workerService.machineShapeVersion()).toBeGreaterThan(coldVersion);
-    const warmVersion = workerService.machineShapeVersion();
-    await workerService.listMachineOptions("development");
-    await workerService.listOperatingSystems("development");
-    expect(workerService.machineShapeVersion()).toBe(warmVersion);
 
     support.getDevelopmentProfile().settings = { region: "changed" };
     await workerService.listMachineOptions("development");

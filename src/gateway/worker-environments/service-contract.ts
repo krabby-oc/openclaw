@@ -156,12 +156,10 @@ export type WorkerEnvironmentServiceContract = {
   readPreparedPoolSummary(): { maxTotal: number; reservedEnvironmentIds: string[] };
   readReadyWorkerTarget(profileId: string): number;
   get(environmentId: string): WorkerEnvironmentServiceRecord | undefined;
-  inventoryVersion(): number;
   readMachineShape(
     environmentId: string,
     prepared?: WorkerEnvironmentPlacementFacts,
   ): SessionPlacementMachine | undefined;
-  machineShapeVersion(): number;
   supportsExecutionMode(profileId: string, mode: WorkerPlacementExecutionMode): boolean;
   readProviderDisplayId(profileId: string): string | undefined;
   listMachineOptions(profileId: string): Promise<readonly WorkerMachineOption[] | undefined>;

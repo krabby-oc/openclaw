@@ -396,7 +396,6 @@ describe("worker environment node enrollment store", () => {
       expect((await store.ensureNodeEnrollment(environmentId)).nodeSetupId).toBe(setupId);
       expect(store.hasPendingNodeEnrollmentSetup(setupId, deviceId)).toBe(true);
       expect(store.hasNodeEnrollmentOwner(deviceId)).toBe(false);
-      const inventoryVersion = store.inventoryVersion();
 
       const connection = await beginConnect();
       const { verification } = connection;
@@ -438,7 +437,6 @@ describe("worker environment node enrollment store", () => {
         });
         expect(store.hasPendingNodeEnrollmentSetup(setupId, deviceId)).toBe(true);
         expect(store.hasPendingNodeEnrollmentSetup(setupId, "different-cloud-device")).toBe(false);
-        expect(store.inventoryVersion()).toBeGreaterThan(inventoryVersion);
         expect(store.hasNodeEnrollmentOwner(deviceId)).toBe(true);
         expect(store.hasNodeEnrollmentOwner("different-cloud-device")).toBe(false);
       } finally {

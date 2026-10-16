@@ -36,12 +36,14 @@ function node(
 function registry<T extends { listConnected: () => NodeSession[] }>(params: T) {
   const value = params as T & {
     listCurrentConnected?: () => Promise<NodeSession[]>;
+    get?: (nodeId: string) => NodeSession | undefined;
     isConnectionCurrentPairingState?: (connId: string) => Promise<boolean>;
   };
   const listCurrentConnected = value.listCurrentConnected ?? (async () => value.listConnected());
   value.listCurrentConnected = listCurrentConnected;
+  value.get ??= (nodeId) => value.listConnected().find((entry) => entry.nodeId === nodeId);
   value.isConnectionCurrentPairingState ??= async (connId) =>
-    (await listCurrentConnected()).some((entry) => entry.connId === connId);
+    value.listConnected().some((entry) => entry.connId === connId);
   const dispose = startNodeConnectionNotifications(value as never, scheduler);
   disposers.push(dispose);
   return Object.assign(value, { dispose });

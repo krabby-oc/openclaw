@@ -37,12 +37,11 @@ export async function commitMentionChanges(
   input: MentionMutation,
   assertCurrent: () => void,
 ): Promise<MentionMutationResult> {
-  const captured = structuredClone(input);
   let admission: SqliteWorkerOperationAdmission | undefined;
   try {
     return await runOpenClawStateWorkerOperation(
       context,
-      (scope) => scope.execute({ type: "mentions.mutate", input: captured }),
+      (scope) => scope.execute({ type: "mentions.mutate", input }),
       {
         assertCurrent,
         createAdmission: () => {
@@ -62,8 +61,8 @@ export async function commitMentionChanges(
       isRecord(facts) &&
       facts.kind === "committed" &&
       isRecord(facts.head) &&
-      facts.head.revision === captured.expectedHead.revision + (captured.changes.length ? 1 : 0) &&
-      facts.head.nextSequence === captured.nextSequence
+      facts.head.revision === input.expectedHead.revision + (input.changes.length ? 1 : 0) &&
+      facts.head.nextSequence === input.nextSequence
     ) {
       return {
         kind: "committed",

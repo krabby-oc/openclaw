@@ -9,7 +9,7 @@ import {
 import { createTestGatewayScheduler } from "../test-utils/gateway-scheduler-clock.js";
 import type { GatewayReloadPlan } from "./config-reload.js";
 import { createGatewayActiveWorkTracker } from "./server-reload-active-work.js";
-import { nextGatewayReloadGeneration } from "./server-reload-generation.js";
+import { beginGatewayReloadLifecycle } from "./server-reload-generation.js";
 import { createGatewayRestartCoordinator } from "./server-reload-restart.js";
 
 const getTotalQueueSize = vi.hoisted(() => vi.fn(() => 0));
@@ -64,7 +64,7 @@ function createCoordinator(
 ) {
   return createGatewayRestartCoordinator({
     params: { logReload: { info: vi.fn(), warn: vi.fn() }, ...params, scheduler },
-    myGeneration: options.myGeneration ?? nextGatewayReloadGeneration(),
+    reloadSignal: options.reloadSignal ?? beginGatewayReloadLifecycle(),
     restartRecoveryAvailable: true,
     getActiveCounts: () => zeroActiveCounts,
     formatActiveDetails: () => [],
@@ -239,11 +239,11 @@ describe("gateway restart readiness preflight", () => {
     const queueSize = getTotalQueueSize.mockReturnValue(1);
     const requestRecoveryRestart = vi.fn(() => ({ status: "emitted" as const }));
     const logReload = { info: vi.fn(), warn: vi.fn() };
-    const myGeneration = nextGatewayReloadGeneration();
-    const tracker = createGatewayActiveWorkTracker({ params: { logReload }, myGeneration });
+    const reloadSignal = beginGatewayReloadLifecycle();
+    const tracker = createGatewayActiveWorkTracker({ params: { logReload }, reloadSignal });
     const coordinator = createCoordinator(
       { logReload, requestRecoveryRestart },
-      { myGeneration, ...tracker },
+      { reloadSignal, ...tracker },
     );
     try {
       expect(coordinator.requestGatewayRestart(restartPlan, {} as OpenClawConfig).status).toBe(

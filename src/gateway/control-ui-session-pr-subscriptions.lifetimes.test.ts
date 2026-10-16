@@ -5,7 +5,7 @@ import {
   createTestGatewayScheduler,
 } from "../test-utils/gateway-scheduler-clock.js";
 import type { ControlUiSessionPullRequests } from "./control-ui-contract.js";
-import type { ControlUiSessionPrTarget } from "./control-ui-session-pr-read.js";
+import type { ControlUiSessionPrReadTarget } from "./control-ui-session-pr-read.js";
 import { createTestControlUiSessionPrSubscriptions } from "./control-ui-session-pr-subscriptions.test-support.js";
 
 const CHANGED_EVENT = "controlUi.sessionPullRequests.changed";
@@ -48,12 +48,13 @@ function releaseHolds() {
   }
 }
 
-function targetFor(sessionKey: string, identity = sessionKey): ControlUiSessionPrTarget {
+function targetFor(sessionKey: string, identity = sessionKey): ControlUiSessionPrReadTarget {
   return {
     params: { sessionKey, agentId: "main" },
     identity,
     readSource: { agentId: "main", path: "unused" },
     source: null,
+    assertCurrent() {},
   };
 }
 
@@ -268,7 +269,16 @@ describe("recipient publication lifetimes", () => {
           await held.wait();
         }
         return async () =>
-          session.sessionKey === "old" && !oldVisible ? undefined : targetFor(session.sessionKey);
+          session.sessionKey === "old" && !oldVisible
+            ? undefined
+            : {
+                ...targetFor(session.sessionKey),
+                assertCurrent() {
+                  if (session.sessionKey === "old" && !oldVisible) {
+                    throw new Error("Old watch lost visibility");
+                  }
+                },
+              };
       },
     });
     await active.replace("same", ["old"]);
@@ -396,6 +406,63 @@ describe("recipient publication lifetimes", () => {
       }
     },
   );
+
+  it("loads for a surviving viewer without preparing every recipient first", async () => {
+    const firstBoundary = createDeferred<"load" | "recipient">();
+    const releaseRead = createDeferred();
+    const releaseLoad = createDeferred();
+    const access = new Map<string, AbortController>(
+      ["selected", "held", "survivor"].map((connId) => [connId, new AbortController()]),
+    );
+    let polling = false;
+    let loaded = false;
+    const broadcastToConnIds = vi.fn();
+    running = createTestControlUiSessionPrSubscriptions({
+      scheduler,
+      broadcastToConnIds,
+      prepareRead: async (connId) => async () => {
+        const grant = access.get(connId)!;
+        if (polling && connId === "held") {
+          firstBoundary.resolve("recipient");
+          await releaseRead.promise;
+        }
+        return grant.signal.aborted
+          ? undefined
+          : { ...target, assertCurrent: () => grant.signal.throwIfAborted() };
+      },
+      load: async (_params, _signal, read) => {
+        if (polling) {
+          firstBoundary.resolve("load");
+          await releaseLoad.promise;
+          read.assertCurrent();
+          loaded = true;
+          return changed;
+        }
+        return READY;
+      },
+    });
+    for (const connId of access.keys()) {
+      await running.replace(connId, ["shared"]);
+    }
+    broadcastToConnIds.mockClear();
+    polling = true;
+    const poll = running.pollNow();
+    try {
+      expect(await Promise.race([firstBoundary.promise, poll.then(() => "settled")])).toBe("load");
+      access.get("selected")!.abort(new Error("Selected viewer retired"));
+      access.get("held")!.abort(new Error("Held viewer retired"));
+      releaseLoad.resolve();
+      releaseRead.resolve();
+      await poll;
+
+      expect(loaded).toBe(true);
+      expect(broadcastToConnIds).toHaveBeenCalledExactlyOnceWith(...publication("survivor"));
+    } finally {
+      releaseRead.resolve();
+      releaseLoad.resolve();
+      await poll;
+    }
+  });
 
   it("checks the recipient's prepared authority when another watcher joins before send", async () => {
     const access = new AbortController();

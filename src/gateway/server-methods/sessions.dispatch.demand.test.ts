@@ -117,8 +117,6 @@ async function withDemandFixture(
     const environmentService = {
       get: (id: string) => environments.get(id),
       readMachineShape: () => undefined,
-      machineShapeVersion: () => 0,
-      inventoryVersion: () => 0,
       supportsExecutionMode: () => true,
     };
     bindDeviceWorkerAvailability(environmentService, async (deviceId) => ({

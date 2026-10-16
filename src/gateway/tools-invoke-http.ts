@@ -118,7 +118,7 @@ export async function handleToolsInvokeHttpRequest(
         invokeGatewayTool({
           cfg,
           input: body,
-          messageChannel: messageChannel ?? undefined,
+          messageChannel,
           accountId,
           agentTo,
           agentThreadId,

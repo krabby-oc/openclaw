@@ -77,7 +77,6 @@ export function createGatewayNodeWorkerBundleInstaller(options: {
 }) {
   const now = options.now ?? Date.now;
   const active = new Map<string, ActiveInstall>();
-  let version = 0;
   const publish = (entry: ActiveInstall, environmentIds = entry.observation.environmentIds) => {
     entry.lastPublicationAtMs = now();
     try {
@@ -160,7 +159,6 @@ export function createGatewayNodeWorkerBundleInstaller(options: {
           ...entry.observation,
           environmentIds: [...entry.environmentReferences.keys()],
         };
-        version++;
         publish(entry);
       } else if (progressListener) {
         // Joining an environment's in-flight install is progress even without a new publication.
@@ -205,7 +203,6 @@ export function createGatewayNodeWorkerBundleInstaller(options: {
               transferredBytes === observation.totalBytes ? "installing" : "transferring";
             const phaseChanged = phase !== observation.phase;
             currentEntry.observation = { ...observation, transferredBytes, updatedAtMs, phase };
-            version++;
             if (phase === "installing" && (phaseChanged || serveChanged)) {
               options.log.info(
                 `${prefix} transfer complete after ${transferSeconds.toFixed(1)}s; node is installing`,
@@ -314,7 +311,6 @@ export function createGatewayNodeWorkerBundleInstaller(options: {
           if (currentEntry.references === 0) {
             active.delete(key);
           }
-          version++;
           // The released environment may have no node binding yet; name it so its projection clears.
           publish(currentEntry, [...currentEntry.observation.environmentIds, params.environmentId]);
         } else {
@@ -340,6 +336,5 @@ export function createGatewayNodeWorkerBundleInstaller(options: {
     readInstall: (nodeId: string) => readInstall((entry) => entry.observation.nodeId === nodeId),
     readInstallForEnvironment: (environmentId: string) =>
       readInstall((entry) => entry.environmentReferences.has(environmentId)),
-    version: () => version,
   });
 }

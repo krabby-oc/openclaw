@@ -985,7 +985,6 @@ async function performPreparedGatewaySessionReset({
                   : { available: false, reason: "unsupported-source" },
               });
               emitGatewaySessionStartPluginHook({
-                cfg,
                 sessionKey: resetSessionKey,
                 sessionId: mutation.nextEntry.sessionId,
                 resumedFrom: mutation.previousSessionId,

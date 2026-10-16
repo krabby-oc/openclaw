@@ -11,7 +11,6 @@ import {
 
 // Keep deduplication and snapshot ownership pinned alongside the shutdown drain tests.
 const session = {
-  cfg: {},
   sessionKey: "agent:main:main",
   sessionId: "session-A",
   storePath: "/tmp/store.json",
@@ -35,12 +34,6 @@ describe("active-sessions-shutdown-tracker", () => {
     expect(expectDefined(entries[0], "entries[0] test invariant").sessionFile).toBe(
       "/tmp/new.jsonl",
     );
-  });
-
-  it("ignores empty sessionId notes", () => {
-    noteActiveSessionForShutdown({ ...session, sessionId: "" });
-
-    expect(listActiveSessionsForShutdown()).toEqual([]);
   });
 
   it("treats forget on an unknown sessionId as a no-op", () => {

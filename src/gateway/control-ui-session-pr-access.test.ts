@@ -412,6 +412,7 @@ it.each(["replace", "unsubscribe"] as const)(
           identity: session.sessionKey,
           readSource: { agentId: "main", path: "/synthetic/unused.sqlite" },
           source: null,
+          assertCurrent() {},
         };
       },
     });

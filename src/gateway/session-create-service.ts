@@ -1146,7 +1146,6 @@ async function createGatewaySessionInScope(
         });
       }
       emitGatewaySessionStartPluginHook({
-        cfg: params.cfg,
         sessionKey: target.canonicalKey,
         sessionId: created.entry.sessionId,
         resumedFrom: parentEntry?.sessionId,

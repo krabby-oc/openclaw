@@ -461,7 +461,7 @@ describe("gateway/node-catalog", () => {
     });
   });
 
-  it("keeps row identity while cloning snapshots and excluding private source fields", () => {
+  it("keeps row identity and excludes private source fields", () => {
     const permissions = { camera: true };
     const hostStats = {
       cpuCount: 4,
@@ -500,11 +500,8 @@ describe("gateway/node-catalog", () => {
     expect(node.permissions).toBe(permissions);
     expect(node.nodePluginTools).toBe(live.nodePluginTools);
     expect(node.hostStats).toEqual(hostStats);
-    expect(node.hostStats).not.toBe(hostStats);
     expect(node.workerSlots).toEqual(workerSlots);
-    expect(node.workerSlots).not.toBe(workerSlots);
     expect(node.workerBundle).toEqual(workerBundle);
-    expect(node.workerBundle).not.toBe(workerBundle);
     expect(Object.keys(node).toSorted()).toEqual(
       [
         "nodeId",
@@ -553,11 +550,7 @@ describe("gateway/node-catalog", () => {
       lastDisconnectedAtMs: undefined,
       sessionHost: false,
     });
-    hostStats.memoryFreeBytes = 1;
-    workerSlots.available = 0;
     permissions.camera = false;
-    expect(node.hostStats?.memoryFreeBytes).toBe(4096);
-    expect(node.workerSlots?.available).toBe(1);
     expect(node.permissions?.camera).toBe(false);
   });
 

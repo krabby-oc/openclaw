@@ -73,7 +73,6 @@ const requireSessionEndHookEvent = (index: number): SessionEndHookEvent => {
 
 function trackSessionForShutdown(params: { sessionId: string; sessionKey?: string }): void {
   emitGatewaySessionStartPluginHook({
-    cfg,
     sessionKey: params.sessionKey ?? "agent:main:main",
     sessionId: params.sessionId,
     storePath: "/tmp/store.json",

@@ -7,7 +7,7 @@ import type { NodeRegistry, NodeSession } from "./node-registry.js";
 
 type NotificationRegistry = Pick<
   NodeRegistry,
-  "listCurrentConnected" | "isConnectionCurrentPairingState" | "invoke"
+  "listCurrentConnected" | "isConnectionCurrentPairingState" | "get" | "invoke"
 >;
 
 type PendingConnectionAlert = {
@@ -77,7 +77,7 @@ class NodeConnectionNotificationRouter {
 
   private async deliverPrimary(pending: PendingConnectionAlert): Promise<void> {
     const connected = await this.registry.listCurrentConnected();
-    const source = this.currentSource(pending, connected);
+    const source = connected.find((node) => this.currentSource(pending, node));
     if (!source) {
       this.finishAlert(pending);
       return;
@@ -107,7 +107,7 @@ class NodeConnectionNotificationRouter {
     attemptedConnId?: string,
   ): Promise<void> {
     const connected = await this.registry.listCurrentConnected();
-    const source = this.currentSource(pending, connected);
+    const source = connected.find((node) => this.currentSource(pending, node));
     if (!source) {
       this.finishAlert(pending);
       return;
@@ -121,18 +121,15 @@ class NodeConnectionNotificationRouter {
 
   private currentSource(
     pending: PendingConnectionAlert,
-    connected: readonly NodeSession[],
+    source: NodeSession | undefined,
   ): NodeSession | undefined {
-    if (!this.attemptIsCurrent(pending)) {
-      return undefined;
-    }
-    return connected.find(
-      (node) =>
-        node.nodeId === pending.nodeId &&
-        node.connId === pending.connId &&
-        node.pairingIdentity === pending.pairingIdentity &&
-        node.pairingGeneration === pending.pairingGeneration,
-    );
+    return this.attemptIsCurrent(pending) &&
+      source?.nodeId === pending.nodeId &&
+      source.connId === pending.connId &&
+      source.pairingIdentity === pending.pairingIdentity &&
+      source.pairingGeneration === pending.pairingGeneration
+      ? source
+      : undefined;
   }
 
   private attemptIsCurrent(pending: PendingConnectionAlert): boolean {
@@ -147,24 +144,17 @@ class NodeConnectionNotificationRouter {
     }
   }
 
-  private async sourceIsCurrent(pending: PendingConnectionAlert): Promise<boolean> {
-    if (!this.attemptIsCurrent(pending)) {
-      return false;
-    }
-    const connected = await this.registry.listCurrentConnected();
-    if (!this.currentSource(pending, connected)) {
-      return false;
-    }
-    return await this.registry.isConnectionCurrentPairingState(pending.connId);
-  }
-
   private async notify(
     target: NodeSession,
     source: NodeSession,
     pending: PendingConnectionAlert,
   ): Promise<boolean> {
     try {
-      if (!(await this.sourceIsCurrent(pending)) || !this.attemptIsCurrent(pending)) {
+      if (
+        !this.attemptIsCurrent(pending) ||
+        !(await this.registry.isConnectionCurrentPairingState(pending.connId)) ||
+        !this.currentSource(pending, this.registry.get(pending.nodeId))
+      ) {
         return false;
       }
       const result = await this.registry.invoke({
@@ -183,6 +173,7 @@ class NodeConnectionNotificationRouter {
       });
       return result.ok;
     } catch {
+      // Alerts are best effort; a failed primary still enters the staged fallback.
       return false;
     }
   }

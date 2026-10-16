@@ -215,10 +215,10 @@ export function createKnownNodeCatalog(params: {
       ...(live && params.deviceFolderNodeIds?.has(nodeId)
         ? { workerHost: { deviceFolders: true as const } }
         : {}),
-      ...(hostStats ? { hostStats: structuredClone(hostStats) } : {}),
-      ...(live && workerSlots ? { workerSlots: { ...workerSlots } } : {}),
-      ...(live && workerBundle ? { workerBundle: structuredClone(workerBundle) } : {}),
-      ...(issues?.length ? { issues: [...issues] } : {}),
+      ...(hostStats ? { hostStats } : {}),
+      ...(live && workerSlots ? { workerSlots } : {}),
+      ...(live && workerBundle ? { workerBundle } : {}),
+      ...(issues?.length ? { issues } : {}),
       nodePluginTools: live?.nodePluginTools,
       pathEnv: live?.pathEnv,
       permissions: live?.permissions ?? nodePairing?.permissions,

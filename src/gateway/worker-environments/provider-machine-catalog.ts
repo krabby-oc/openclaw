@@ -29,10 +29,8 @@ export function createWorkerMachineCatalog(
   } & Partial<CatalogValues>;
   const machineCatalogs = new Map<string, MachineCatalog>();
   const machineShapeListeners = new Set<(profileId: string) => void>();
-  let machineShapeVersion = 0;
 
   const machineCatalogChanged = (profileId: string) => {
-    machineShapeVersion += 1;
     notifyListeners(machineShapeListeners, profileId, () => {
       options.warn("Worker machine metadata change reporting failed");
     });
@@ -178,6 +176,5 @@ export function createWorkerMachineCatalog(
     subscribeMachineShapeChanged: (listener: (profileId: string) => void) =>
       registerListener(machineShapeListeners, listener),
     clearMachineShapeListeners: () => machineShapeListeners.clear(),
-    machineShapeVersion: () => machineShapeVersion,
   };
 }

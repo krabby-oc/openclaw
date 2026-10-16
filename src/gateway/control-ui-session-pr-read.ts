@@ -113,7 +113,11 @@ export function resolveProjectedControlUiSessionPrTarget(
   );
 }
 
-export type ControlUiSessionPrRead = () => Promise<ControlUiSessionPrTarget | undefined>;
+export type ControlUiSessionPrReadTarget = ControlUiSessionPrTarget & {
+  assertCurrent: () => void;
+};
+
+export type ControlUiSessionPrRead = () => Promise<ControlUiSessionPrReadTarget | undefined>;
 
 /** Background facts use the Gateway's current row owner, never a completed caller's grant. */
 export async function prepareControlUiSessionPrServiceTarget(
