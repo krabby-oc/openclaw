@@ -32,6 +32,8 @@ beforeEach(() => {
     paths: [],
     stateRoots: [],
     pluginOwners: {},
+    pluginInventory: { pluginRoots: [], resources: [] },
+    resources: [],
   });
   vi.mocked(ensureSqliteLibrarySelected).mockReturnValue({ source: "runtime" });
 });
