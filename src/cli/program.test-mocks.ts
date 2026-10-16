@@ -70,12 +70,12 @@ vi.mock("../commands/configure.commands.js", () => ({
   ],
   configureCommand: programMocks.configureCommand,
   configureCommandWithSections: programMocks.configureCommandWithSections,
-  configureCommandFromSectionsArg: (sections: unknown, runtimeLocal: unknown) => {
+  configureCommandFromSectionsArg: (sections: unknown) => {
     const resolved = Array.isArray(sections) ? sections : [];
     if (resolved.length > 0) {
-      return programMocks.configureCommandWithSections(resolved, runtimeLocal);
+      return programMocks.configureCommandWithSections(resolved, programMocks.runtime);
     }
-    return programMocks.configureCommand({}, runtimeLocal);
+    return programMocks.configureCommand({}, programMocks.runtime);
   },
 }));
 vi.mock("../commands/setup.js", () => ({ setupCommand: programMocks.setupCommand }));
