@@ -1,3 +1,4 @@
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, expect, it, vi } from "vitest";
 import { observeHostDataSql } from "../../test/helpers/sqlite-statement-execution-counter.js";
 import { readTranscriptEventRows } from "../config/sessions/session-accessor.sqlite-read.js";
@@ -59,7 +60,12 @@ it.each([
             })
           : assertCurrent;
       probe.admission(admission, (request, grant, callback) => {
-        if (request.stage !== "commit") {
+        if (
+          request.stage !== "commit" ||
+          !isRecord(request.facts) ||
+          !isRecord(request.facts.publication) ||
+          request.facts.publication.kind !== "session-entry-patch-committed"
+        ) {
           callback(request, grant);
           return;
         }
@@ -97,7 +103,7 @@ it.each([
           await expect(compact).resolves.toMatchObject({ compacted: true, kept: 3 });
         }
         if (authority === "prepared") {
-          expect(commits).toBeGreaterThan(0);
+          expect(commits).toBe(1);
           expect(commitChecks).toBe(1);
         } else {
           expect(commitChecks).toBe(0);

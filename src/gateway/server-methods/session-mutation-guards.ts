@@ -121,7 +121,7 @@ function captureRequestMutationOptions(options: GatewayRequestOptions, client = 
   return { req, client, signal, hasCurrentClientAuthority, sessionMutationCommitGuard };
 }
 
-/** Prepared request owners use workers; opaque callbacks retain their native metadata. */
+/** Unbound requests retain native authority; dispatch owners explicitly prepare workers. */
 export function readGatewayRequestMutationAuthority(
   options: RequestMutationOptions,
 ): GatewayRequestMutationAuthority {
@@ -131,18 +131,9 @@ export function readGatewayRequestMutationAuthority(
   }
   const { req, client, signal, hasCurrentClientAuthority, sessionMutationCommitGuard } = options;
   const captured = { req, client, signal, hasCurrentClientAuthority, sessionMutationCommitGuard };
-  const source: SessionSourceAssertion | undefined = sessionMutationCommitGuard;
-  const workerCompatible =
-    (!source || source.prepareSessionSource) &&
-    (!hasCurrentClientAuthority || readGatewayDeviceRevocationGuard(hasCurrentClientAuthority));
-  const assertLifetimeCurrent = captureRequestAuthorityAssertion(captured, !workerCompatible);
+  const assertLifetimeCurrent = captureRequestAuthorityAssertion(captured, true);
   const authority: GatewayRequestMutationAuthority = {
-    ...(workerCompatible
-      ? {
-          family: "worker" as const,
-          assertWorkerCurrent: () => assertRequestTransportCurrent(captured),
-        }
-      : { family: "native-compatibility" as const }),
+    family: "native-compatibility",
     assertPreparationCurrent: () => assertRequestTransportCurrent(captured),
     assertCurrent: assertLifetimeCurrent,
     assertLifetimeCurrent,
@@ -173,6 +164,24 @@ export function bindInProcessRequestMutationAuthority<T extends GatewayRequestOp
       assertLifetimeCurrent: assertWorkerCurrent,
       assertWorkerCurrent,
     });
+  } else {
+    const source: SessionSourceAssertion | undefined = options.sessionMutationCommitGuard;
+    if (
+      (!source || source.prepareSessionSource) &&
+      (!options.hasCurrentClientAuthority ||
+        readGatewayDeviceRevocationGuard(options.hasCurrentClientAuthority))
+    ) {
+      const captured = captureRequestMutationOptions(options);
+      const assertLifetimeCurrent = captureRequestAuthorityAssertion(captured, false);
+      const assertWorkerCurrent = () => assertRequestTransportCurrent(captured);
+      bindRequestMutationAuthority(options, {
+        family: "worker",
+        assertPreparationCurrent: assertWorkerCurrent,
+        assertCurrent: assertLifetimeCurrent,
+        assertLifetimeCurrent,
+        assertWorkerCurrent,
+      });
+    }
   }
   if (!assertSourceCurrent && !assertPreparationCurrent && !questionCallerRead) {
     return options;
