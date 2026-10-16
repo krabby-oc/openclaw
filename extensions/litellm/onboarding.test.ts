@@ -55,7 +55,6 @@ function createPrompter(
     }
     return option.value;
   }
-  const select = vi.fn(selectOption);
   const text = vi.fn(async (prompt: Parameters<WizardPrompter["text"]>[0]) => {
     if (prompt.message === "LiteLLM proxy base URL") {
       return params.baseUrl ?? "http://127.0.0.1:4000/v1";
@@ -65,7 +64,9 @@ function createPrompter(
     }
     return params.manualModel ?? "local-qwen";
   });
-  return createTestWizardPrompter({ select, text });
+  const prompter = createTestWizardPrompter({ select: selectOption, text });
+  vi.spyOn(prompter, "select");
+  return prompter;
 }
 
 async function configure(
