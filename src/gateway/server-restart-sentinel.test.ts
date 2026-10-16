@@ -1353,7 +1353,10 @@ describe("scheduleRestartSentinelWake", () => {
     await expect(deliverGeneratedMedia(entry)).rejects.toThrow("its completion turn follows");
     expect(mocks.dispatchGatewayMethodInProcess).not.toHaveBeenCalled();
     const advanced = await mocks.loadPendingSessionDelivery(entry.id, queueContext);
-    expect(advanced).toMatchObject({ expectedMediaUrls: [], agentRunAttempt: 1 });
+    expect(advanced).toMatchObject({
+      expectedMediaUrls: [],
+      agentRunAttempt: (entry.agentRunAttempt ?? 0) + 1,
+    });
     await deliverGeneratedMedia(advanced);
   }
 
@@ -1410,6 +1413,31 @@ describe("scheduleRestartSentinelWake", () => {
     expect(mocks.sendDurableMessageBatchCore.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.dispatchGatewayMethodInProcess.mock.invocationCallOrder[0] ?? 0,
     );
+  });
+
+  it("drains a media row rearmed by the retired agent-turn design through host delivery", async () => {
+    const entry = await enqueueGeneratedMedia({
+      messageId: "image:task-upgrade:agent-loop",
+      message: "Deliver the caption and every structured generated attachment.",
+      expectedMediaUrls: ["/tmp/missing.png"],
+      suppressTextDelivery: true,
+    });
+    await mocks.advanceSessionDeliveryAgentRun(entry.id, undefined, queueContext);
+    const rearmed = await mocks.loadPendingSessionDelivery(entry.id, queueContext);
+    expect(rearmed).toMatchObject({ agentRunAttempt: 1, suppressTextDelivery: true });
+
+    await deliverGeneratedMediaThenCompletion(rearmed);
+
+    expect(mocks.sendDurableMessageBatchCore.mock.calls[0]?.[0]).toMatchObject({
+      payloads: [{ mediaUrls: ["/tmp/missing.png"] }],
+    });
+    const { request } = lastAgentDispatch();
+    // The retired instruction now follows a host notice that the files were sent.
+    expect(String(request.message)).toMatch(
+      /^[\s\S]*Do not send these files again\.[\s\S]*Deliver the caption/u,
+    );
+    expect(request).not.toHaveProperty("disableMessageTool");
+    expect(request).not.toHaveProperty("forceRestartSafeTools");
   });
 
   it("does not resend media after a crash between the send and the completion turn", async () => {
