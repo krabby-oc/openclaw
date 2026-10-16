@@ -58,18 +58,20 @@ export async function exportPostgresBackup(params: {
     // The private artifact must exist before the host admits a worker's native open.
     await fs.writeFile(raw, "", { flag: "wx", mode: 0o600 });
     using db = openNodeSqliteDatabase(raw, { readBigInts: true });
+    const allocations = await readDatabasePortAllocations(
+      { engine: "postgres", db: client, namespace: anchor.namespace },
+      descriptor,
+    );
     verification = await materializeDatabasePort({
       source: { engine: "postgres", db: client, namespace: anchor.namespace },
       destination: { engine: "sqlite", db },
       descriptor,
       storeId: anchor.storeId,
+      sourceAllocations: allocations,
       assertCurrent: params.assertCurrent,
     });
     // The portable image uses SQLite allocation, while a matched PG restore retains its sequence.
-    verification.allocations = await readDatabasePortAllocations(
-      { engine: "postgres", db: client, namespace: anchor.namespace },
-      descriptor,
-    );
+    verification.allocations = allocations;
   }
   const sanitizedDifferences: string[] = [];
   params.assertCurrent();
