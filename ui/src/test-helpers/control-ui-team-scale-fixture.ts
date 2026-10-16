@@ -1,3 +1,4 @@
+import type { Buffer } from "node:buffer";
 import type {
   SessionCatalog,
   SessionsCatalogHostEvent,
@@ -45,7 +46,12 @@ const TEAM_SCALE_LIVE_RUN_ID = "team-scale-live-run";
 type TeamScaleCatalogEvent = { event: "sessions.catalog.host"; payload: SessionsCatalogHostEvent };
 type TeamScaleEvent = TeamScaleCatalogEvent | { event: "presence"; payload: PresencePayload };
 
-type FixtureAsset = { body: string; contentType: string; status?: number; delayMs?: number };
+type FixtureAsset = {
+  body: string | Buffer;
+  contentType: string;
+  status?: number;
+  delayMs?: number;
+};
 type TeamScaleSession = GatewaySessionRow & { updatedAt: number; sessionId: string };
 type FixtureOptions = {
   baseUrl?: string;
@@ -72,7 +78,6 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
   const counts = TEAM_SCALE_COUNTS;
   const now = options.now ?? Date.now();
   const baseUrl = options.baseUrl ?? "http://127.0.0.1:19626/";
-  const assets = new Map<string, FixtureAsset>();
   const agentNames = ["Harbor", "Forge", "Scout", "Atlas", "Cedar", "Beacon"];
   const agents: AgentsListResult = {
     defaultId: "main",
@@ -84,7 +89,15 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
       identity: { name, emoji: ["⚓", "🔧", "🔭", "🗺️", "🌲", "💡"][index] },
     })),
   };
-  const { people, profiles } = createTeamScalePeople(counts.people, now, options.sidebarLiveChurn);
+  const { people, profiles, avatarAssets, sharingMembers } = createTeamScalePeople(
+    counts.people,
+    now,
+    {
+      avatars: options.sidebarLiveChurn,
+      sharing: options.closedMenuMembers,
+    },
+  );
+  const assets = new Map<string, FixtureAsset>(avatarAssets);
   // The selected agent owns a full 300-row roster; extra agent identities model
   // the switcher without silently reducing the selected agent's page pressure.
   const sessions: TeamScaleSession[] = Array.from({ length: counts.sessions }, (_, index) => {
@@ -154,16 +167,6 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
     : undefined;
   if (duplicateReads) {
     assets.set(duplicateReads.mediaPath, duplicateReads.asset);
-  }
-  const sharingPeople = options.closedMenuMembers ? people.slice(34, 82) : [];
-  for (const person of sharingPeople) {
-    const profile = profiles.find((entry) => entry.id === person.id)!;
-    profile.hasAvatar = true;
-    profile.avatarMime = "image/svg+xml";
-    assets.set(`/api/users/${person.id}/avatar`, {
-      contentType: "image/svg+xml",
-      body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="teal"/></svg>',
-    });
   }
   pinnedRows[0]!.sharingRole = "admin";
   pinnedRows[0]!.visibility = "shared";
@@ -420,26 +423,8 @@ export function createControlUiTeamScaleFixture(options: FixtureOptions = {}) {
       ...(duplicateReads?.featureMethods ?? []),
     ],
     methodResponses: {
-      ...(options.closedMenuMembers
-        ? {
-            "session.members.listEvidence": {
-              sessionKey: selectedSessionKey,
-              role: "admin",
-              allowedVisibilities: ["shared", "read-only", "suggest", "draft"],
-              members: sharingPeople.slice(0, 6).map((person) => ({
-                identityId: person.id,
-                addedBy: people[0]!.id,
-                addedAt: now,
-              })),
-              identities: sharingPeople.map((person) => ({
-                id: person.id,
-                type: "human",
-                identity: person.identity,
-                label: person.name,
-                avatarUrl: `/api/users/${person.id}/avatar?v=${now}`,
-              })),
-            },
-          }
+      ...(sharingMembers
+        ? { "session.members.listEvidence": { sessionKey: selectedSessionKey, ...sharingMembers } }
         : {}),
       "question.list": { questions: [] },
       ...duplicateReads?.methodResponses,
