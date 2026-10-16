@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { writeSessionEntry } from "../config/sessions/session-accessor.sqlite-entry-store.js";
 import * as sqlite from "../infra/node-sqlite.js";
+import type { SqlConnection } from "../infra/sql-connection.js";
 import { readSqliteDatabaseCleanClose as isClean } from "../infra/sqlite-database-admission.js";
 import * as integrityWorker from "../infra/sqlite-integrity-worker.js";
 import type { SqliteIntegrityDiagnostics } from "../infra/sqlite-integrity.js";
@@ -43,6 +44,7 @@ const makeOptions = (agentId: string) => ({
   agentId,
   env: { OPENCLAW_STATE_DIR: tempDirs.make(`openclaw-${agentId}-`) },
 });
+const row = (db: Pick<SqlConnection, "prepare">, sql: string) => db.prepare(sql).get();
 function observeIntegrityChecks(pathname: string, pattern: RegExp) {
   const checks: string[] = [];
   const open = sqlite.openNodeSqliteDatabase;
@@ -98,7 +100,7 @@ it("certifies idle handles after grace and borrowed handles only after their fin
   const borrowed = withAgent(heldOptions, async (database) => {
     entered.resolve();
     await release.promise;
-    expect(database.db.prepare("SELECT 1 AS value").get()).toEqual({ value: 1 });
+    expect(row(database.db, "SELECT 1 AS value")).toEqual({ value: 1 });
   });
   try {
     await entered.promise;
@@ -156,7 +158,7 @@ it("retains admission through pinned WAL eviction and certifies the final checkp
       closeCachedOpenClawAgentDatabase(database);
       expect(database.db.isOpen).toBe(false);
       await withAgent(options, (reopened) => {
-        expect(reopened.db.prepare("SELECT updated_at FROM session_nodes").get()).toEqual({
+        expect(row(reopened.db, "SELECT updated_at FROM session_nodes")).toEqual({
           updated_at: iteration,
         });
       });
@@ -181,14 +183,12 @@ it("checks once across writes and physical admitted reopens, including after lif
   const first = openAgent(options);
   expect(checks).toEqual(["PRAGMA integrity_check;", "PRAGMA foreign_key_check;"]);
   first.db.exec("INSERT INTO auth_profile_state VALUES ('preserved', '{\"value\":42}', 1)");
+  const read = ({ db }: typeof first) =>
+    row(db, "SELECT state_json FROM auth_profile_state WHERE state_key='preserved'");
   for (let iteration = 0; iteration < 2; iteration += 1) {
     closeAgent(pathname);
-    const read = (database: typeof first) =>
-      database.db
-        .prepare("SELECT state_json FROM auth_profile_state WHERE state_key = ?")
-        .get("preserved");
-    const row = await withAgentAdmission(options, (run) => Promise.resolve(run(() => {})), read);
-    expect(row).toEqual({ state_json: '{"value":42}' });
+    const result = await withAgentAdmission(options, (run) => Promise.resolve(run(() => {})), read);
+    expect(result).toEqual({ state_json: '{"value":42}' });
   }
   expect(checks).toEqual(["PRAGMA integrity_check;", "PRAGMA foreign_key_check;"]);
   expect(worker).not.toHaveBeenCalled();
@@ -243,38 +243,36 @@ it("refuses an orphan allocated page before admitting a dirty database", async (
   expect(admitted).not.toHaveBeenCalled();
 });
 
-it("does not lend remembered integrity to another file at the same path", () => {
-  const options = makeOptions("integrity-cache");
-  const database = openAgent(options);
-  closeAgent(database.path);
-  const replacement = `${database.path}.replacement`;
-  fs.copyFileSync(database.path, replacement);
-  createUnsafeIndexDrift(replacement);
-  fs.renameSync(replacement, database.path);
-  expect(() => openAgent(options)).toThrow(
+it.each([
+  [
+    "index drift",
+    "integrity-cache",
     /integrity_check failed.*missing from index unsafe_index_records_value/iu,
-  );
-});
-
-it("rechecks the media version guard after a validated handle is replaced by a populated v0 store", () => {
-  const options = makeOptions("worker-1");
-  const databasePath = openAgent(options).path;
-  expect(closeAgent(databasePath)).toBe(true);
-
-  fs.copyFileSync(databasePath, `${databasePath}.replacement`);
-  fs.renameSync(`${databasePath}.replacement`, databasePath);
-  const { DatabaseSync } = sqlite.requireNodeSqlite();
-  const downgraded = new DatabaseSync(databasePath);
-  try {
-    downgraded.exec(`
-      PRAGMA user_version = 0;
-      UPDATE schema_meta SET schema_version = 0 WHERE meta_key = 'primary';
-    `);
-  } finally {
-    downgraded.close();
+  ],
+  ["populated v0 store", "worker-1", "run openclaw doctor --fix to migrate persisted media"],
+] as const)("revalidates a replacement inode with %s", (damage, agentId, expected) => {
+  const options = makeOptions(agentId);
+  const { path: pathname } = openAgent(options);
+  expect(closeAgent(pathname)).toBe(true);
+  const replacement = `${pathname}.replacement`;
+  fs.copyFileSync(pathname, replacement);
+  if (damage === "index drift") {
+    createUnsafeIndexDrift(replacement);
   }
-
-  expect(() => openAgent(options)).toThrow("run openclaw doctor --fix to migrate persisted media");
+  fs.renameSync(replacement, pathname);
+  if (damage === "populated v0 store") {
+    const { DatabaseSync } = sqlite.requireNodeSqlite();
+    const downgraded = new DatabaseSync(pathname);
+    try {
+      downgraded.exec(`
+        PRAGMA user_version = 0;
+        UPDATE schema_meta SET schema_version = 0 WHERE meta_key = 'primary';
+      `);
+    } finally {
+      downgraded.close();
+    }
+  }
+  expect(() => openAgent(options)).toThrow(expected);
 });
 
 it.each(["invalid seal", "foreign lease"] as const)(
@@ -313,9 +311,7 @@ it.each(["invalid seal", "foreign lease"] as const)(
       logger.info.mockClear();
       const reopened = openAgent(options);
       expect(
-        reopened.db
-          .prepare("SELECT state_json FROM auth_profile_state WHERE state_key='preserved'")
-          .get(),
+        row(reopened.db, "SELECT state_json FROM auth_profile_state WHERE state_key='preserved'"),
       ).toEqual({ state_json: '{"ok":true}' });
       expect(diagnostics?.integrityGateOutcome).toBe("cached");
       expect(logger.info).not.toHaveBeenCalled();
@@ -334,6 +330,14 @@ it("adopts the released quarantine schema without changing its rows or version",
   const { env } = makeOptions("upgraded");
   const storePath = resolveQuarantineStorePath(env);
   const quarantinedPath = path.join(env.OPENCLAW_STATE_DIR, "retained.sqlite");
+  const entry = {
+    path: quarantinedPath,
+    kind: "agent",
+    reason: "retained quarantine",
+    quarantined_at: 1,
+    writer_app_version: "2026.9.5",
+    verified_generation: null,
+  };
   fs.mkdirSync(path.dirname(storePath), { recursive: true });
   {
     using previous = sqlite.openNodeSqliteDatabase(storePath);
@@ -347,23 +351,14 @@ it("adopts the released quarantine schema without changing its rows or version",
     `);
     previous
       .prepare("INSERT INTO quarantined_databases VALUES (?, ?, ?, ?, ?, ?)")
-      .run(quarantinedPath, "agent", "retained quarantine", 1, "2026.9.5", null);
+      .run(...Object.values(entry));
   }
 
   const database = openAgent({ agentId: "upgraded", env });
   expect(isClean(database.path)).toBe(false);
   using upgraded = sqlite.openNodeSqliteDatabase(storePath, { readOnly: true });
-  expect(upgraded.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 });
-  expect(upgraded.prepare("SELECT * FROM quarantined_databases").all()).toEqual([
-    {
-      path: quarantinedPath,
-      kind: "agent",
-      reason: "retained quarantine",
-      quarantined_at: 1,
-      writer_app_version: "2026.9.5",
-      verified_generation: null,
-    },
-  ]);
+  expect(row(upgraded, "PRAGMA user_version")).toEqual({ user_version: 2 });
+  expect(upgraded.prepare("SELECT * FROM quarantined_databases").all()).toEqual([entry]);
 });
 
 it("refuses the first write when its clean-close seal cannot be removed", () => {
@@ -389,9 +384,7 @@ it("refuses the first write when its clean-close seal cannot be removed", () => 
   }
   const reopened = openAgent(options);
   expect(
-    reopened.db
-      .prepare("SELECT state_key FROM auth_profile_state WHERE state_key='must-not-write'")
-      .get(),
+    row(reopened.db, "SELECT state_key FROM auth_profile_state WHERE state_key='must-not-write'"),
   ).toBeUndefined();
   reopened.db.exec("INSERT INTO auth_profile_state VALUES ('can-write', '{}', 1)");
   expect(isClean(agent.path)).toBe(false);
