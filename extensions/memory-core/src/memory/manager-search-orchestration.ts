@@ -330,11 +330,9 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
         ).catch((err: unknown) => {
           if (
             shouldUpgradeProviderKey ||
-            (err instanceof WorkerTaskError && err.code === "overloaded")
+            (err instanceof WorkerTaskError && err.code === "overloaded") ||
+            readErrorName(err) === "DatabaseSearchCapabilityUnavailableError"
           ) {
-            throw err;
-          }
-          if (readErrorName(err) === "DatabaseSearchCapabilityUnavailableError") {
             throw err;
           }
           log.warn(`memory sync failed (search-identity-repair): ${formatErrorMessage(err)}`);
