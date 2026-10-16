@@ -115,6 +115,7 @@ export function createWorkerPlacementDiskSpaceMonitor(params: {
   const observations = new Map<string, DiskSpaceObservation>();
   const staleBindings = new Map<string, ActivePlacement>();
   const now = params.now ?? Date.now;
+  let observationVersion = 0;
   let dirty = true;
   let nextSweepAtMs = 0;
   let lastRunnerVersion = -1;
@@ -171,6 +172,14 @@ export function createWorkerPlacementDiskSpaceMonitor(params: {
     // Late samples remain tagged with their original binding; read() hides them after a move.
     const previous = read(placement);
     observations.set(placement.sessionId, candidate);
+    if (
+      !previous ||
+      previous.availableBytes !== snapshot.availableBytes ||
+      previous.totalBytes !== snapshot.totalBytes ||
+      previous.observedAtMs !== snapshot.observedAtMs
+    ) {
+      observationVersion += 1;
+    }
     if (previous?.status !== snapshot.status && (previous || snapshot.status !== "ok")) {
       emitSessionLifecycleEvent({
         sessionKey: placement.sessionKey,
@@ -212,6 +221,7 @@ export function createWorkerPlacementDiskSpaceMonitor(params: {
     for (const [sessionId, observation] of observations) {
       if (!hasExactBinding(observation, activeBySession.get(sessionId))) {
         observations.delete(sessionId);
+        observationVersion += 1;
       }
     }
     for (const [sessionId, binding] of staleBindings) {
@@ -268,5 +278,6 @@ export function createWorkerPlacementDiskSpaceMonitor(params: {
       dirty || lastRunnerVersion !== params.runnerAvailability.version()
         ? now() + DISK_SPACE_RETRY_MS
         : nextSweepAtMs,
+    version: () => observationVersion,
   };
 }

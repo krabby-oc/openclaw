@@ -161,6 +161,7 @@ describe("Gateway node worker bundle installer", () => {
       startedAtMs: 1_000,
       updatedAtMs: 1_000,
     });
+    expect(h.ensure.version()).toBe(1);
     expect(h.changed).toHaveBeenCalledExactlyOnceWith(node.nodeId, ["environment-1"]);
     expect(h.log.info).toHaveBeenCalledWith(
       "worker runtime install started (refresh): node=node-1 bundle=aaaaaaaaaaaa size=4.0 MB",
@@ -169,6 +170,7 @@ describe("Gateway node worker bundle installer", () => {
     h.advance(500);
     call.progress(1_000_000);
     expect(h.ensure.readInstall(node.nodeId)).toMatchObject({ transferredBytes: 1_000_000 });
+    expect(h.ensure.version()).toBe(2);
     expect(h.changed).toHaveBeenCalledTimes(2);
     h.advance(1_500);
     call.progress(2_000_000);
@@ -198,6 +200,7 @@ describe("Gateway node worker bundle installer", () => {
     expect(h.ensure.readInstall(node.nodeId)).toBeUndefined();
     expect(h.changed).toHaveBeenCalledTimes(5);
     expect(h.changed).toHaveBeenLastCalledWith(node.nodeId, ["environment-1"]);
+    expect(h.ensure.version()).toBe(7);
     expect(h.log.info).toHaveBeenLastCalledWith(
       "worker runtime install: node=node-1 bundle=aaaaaaaaaaaa installed in 31.0s",
     );
@@ -231,6 +234,7 @@ describe("Gateway node worker bundle installer", () => {
     provision.succeed();
     await provision.pending;
     expect(h.ensure.readInstallForEnvironment("environment-1")?.phase).toBe("installing");
+    const version = h.ensure.version();
     const changes = h.changed.mock.calls.length;
     provisionProgress.mockClear();
     refreshProgress.mockClear();
@@ -241,6 +245,7 @@ describe("Gateway node worker bundle installer", () => {
     expect(refreshProgress).toHaveBeenCalledOnce();
     expect(h.ensure.readInstallForEnvironment("environment-1")).toBeUndefined();
     expect(h.ensure.readInstall(node.nodeId)?.environmentIds).toEqual(["environment-2"]);
+    expect(h.ensure.version()).toBe(version + 1);
     expect(h.changed).toHaveBeenCalledTimes(changes + 1);
     expect(h.changed).toHaveBeenLastCalledWith(node.nodeId, ["environment-2", "environment-1"]);
     expect(h.ensure.readInstallForEnvironment("environment-2")?.phase).toBe("installing");
@@ -371,6 +376,7 @@ describe("Gateway node worker bundle installer", () => {
             await expect(pending).resolves.toMatchObject({ bundleHash: artifact.bundleHash });
           }
           expect(ensure.readInstall(current.nodeId)).toBeUndefined();
+          expect(ensure.version()).toBe((index + 1) * 2);
           const request = invoke.mock.calls[index]?.[0];
           expect(request).toMatchObject({
             node: current,

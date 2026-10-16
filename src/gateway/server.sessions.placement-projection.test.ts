@@ -248,6 +248,8 @@ function placementContext(
             }
           : undefined,
       readMachineShape: () => undefined,
+      machineShapeVersion: () => 0,
+      inventoryVersion: () => 0,
     },
   };
 }
@@ -306,8 +308,10 @@ test.each([
       workerEnvironmentService: {
         get: getEnvironment,
         readMachineShape: () => identity.machine,
+        machineShapeVersion: () => 0,
+        inventoryVersion: () => 0,
       },
-      workerPlacementDiskSpaceReader: { read: () => diskSpace },
+      workerPlacementDiskSpaceReader: { read: () => diskSpace, version: () => 1 },
       workerPlacementRunnerAvailabilityReader: {
         read: () => ({ kind: "device", status: "offline" }),
         version: () => 1,

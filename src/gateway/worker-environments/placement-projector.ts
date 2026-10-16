@@ -31,6 +31,7 @@ export type WorkerSessionPlacementReader = Pick<WorkerSessionPlacementStore, "ge
 
 export type WorkerPlacementDiskSpaceReader = {
   read(record: WorkerSessionPlacementRecord): SessionPlacementDiskSpace | undefined;
+  version(): number;
 };
 
 export type WorkerPlacementRunnerAvailabilityReader = {
@@ -49,6 +50,7 @@ export type WorkerPlacementRuntimeInstallReader = {
     record: WorkerSessionPlacementRecord,
     environment?: Pick<WorkerEnvironmentPlacementFacts, "nodeDeviceId"> | null,
   ): SessionPlacementWorkerRuntimeInstall | undefined;
+  version(): number;
 };
 
 // Structural so the projector does not import the installer module (import cycle).
@@ -61,6 +63,7 @@ export function createWorkerPlacementRuntimeInstallReader(params: {
   installer: {
     readInstall(nodeId: string): WorkerRuntimeInstallObservation | undefined;
     readInstallForEnvironment(environmentId: string): WorkerRuntimeInstallObservation | undefined;
+    version(): number;
   };
 }): WorkerPlacementRuntimeInstallReader {
   return {
@@ -92,6 +95,7 @@ export function createWorkerPlacementRuntimeInstallReader(params: {
       const { phase, transferredBytes, totalBytes, startedAtMs, updatedAtMs } = observation;
       return { phase, transferredBytes, totalBytes, startedAtMs, updatedAtMs };
     },
+    version: () => params.installer.version(),
   };
 }
 

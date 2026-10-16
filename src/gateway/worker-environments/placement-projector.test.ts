@@ -223,6 +223,7 @@ describe("worker placement projection", () => {
       installer: {
         readInstall: (nodeId) => (nodeId === observation.nodeId ? observation : undefined),
         readInstallForEnvironment: (id) => (id === record.environmentId ? observation : undefined),
+        version: () => 1,
       },
     });
     const active = { ...activePlacement(), workerBundleHash: "c".repeat(64) };

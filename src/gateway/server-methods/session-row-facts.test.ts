@@ -217,7 +217,7 @@ it("refreshes selected placement/environment facts by revision and reuses them w
     const context = {
       workerSessionPlacementService: placements,
       workerEnvironmentService: environments,
-      workerPlacementDiskSpaceReader: { read: () => disk },
+      workerPlacementDiskSpaceReader: { read: () => disk, version: () => 0 },
       workerPlacementRunnerAvailabilityReader: createWorkerPlacementRunnerAvailabilityReader({
         environments,
         hasCurrentDeviceRunner: () => runnerAvailable,
@@ -228,6 +228,7 @@ it("refreshes selected placement/environment facts by revision and reuses them w
           readInstall: (nodeId) => (nodeId === runtimeInstall.nodeId ? runtimeInstall : undefined),
           readInstallForEnvironment: (id) =>
             runtimeInstall.environmentIds.includes(id) ? runtimeInstall : undefined,
+          version: () => runtimeInstall.updatedAtMs,
         },
       }),
     };

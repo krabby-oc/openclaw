@@ -48,9 +48,7 @@ vi.mock("../infra/owned-directory-observation.js", () => ({
 }));
 
 import { resolveGatewaySessionStoreReadSources } from "./session-utils-store-candidates.js";
-import {
-  prepareGatewaySessionStoreReadSourcesAsync,
-} from "./session-utils-store-sources.js";
+import { prepareGatewaySessionStoreReadSourcesAsync } from "./session-utils-store-sources.js";
 
 it.each([false, true])(
   "bounds discovery and refreshes only the next roster (fixed: %s)",

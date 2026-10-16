@@ -326,6 +326,7 @@ export async function createWorkerEnvironmentStore(
         owner.hasSessionAttachment(requireWorkerEnvironmentString(environmentId, "id")),
       );
     },
+    inventoryVersion: () => read(owner.version),
     get: (id: string) => read(() => owner.get(requireWorkerEnvironmentString(id, "id"))),
     list: () => read(() => owner.list()),
     listForReconcile: () => read(() => owner.list(true)),
