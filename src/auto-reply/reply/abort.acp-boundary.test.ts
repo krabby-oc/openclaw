@@ -65,11 +65,14 @@ it.each([
     const acpKey = "agent:main:acp:bound-stop";
     const runningKey = "agent:main:subagent:running";
     const queuedKey = "agent:main:subagent:queued";
+    const children = [
+      ["running", runningKey],
+      ["queued", queuedKey],
+    ] as const;
     for (const [runId, sessionKey] of [
       ["source", sourceKey],
       ["acp", acpKey],
-      ["running", runningKey],
-      ["queued", queuedKey],
+      ...children,
     ] as const) {
       await writeSubagentSessionEntry({
         stateDir: fixture.stateDir,
@@ -183,12 +186,7 @@ it.each([
     const nativeTerminal = createDeferred();
     const stopObservingNative = subscribeSubagentRunChanges("persistence", () => {
       if (
-        (
-          [
-            ["running", runningKey],
-            ["queued", queuedKey],
-          ] as const
-        ).every(([runId, key]) => {
+        children.every(([runId, key]) => {
           const entry = subagentRuns.get(runId);
           return entry?.childSessionKey === key && entry.endedReason === "subagent-killed";
         })
@@ -239,10 +237,7 @@ it.each([
           onInterrupt: () => nativeInterrupted.resolve(),
         });
       }
-      for (const [runId, childSessionKey] of [
-        ["running", runningKey],
-        ["queued", queuedKey],
-      ] as const) {
+      for (const [runId, childSessionKey] of children) {
         await registerSubagentRun({
           runId,
           childSessionKey,
