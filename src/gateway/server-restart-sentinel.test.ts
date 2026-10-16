@@ -481,12 +481,8 @@ vi.mock("../infra/outbound/deliver-queue-admission.js", () => ({
   ),
 }));
 
-vi.mock("../channels/message/runtime.js", async () => ({
-  durableMessageBatchMayHaveReachedRecipient: (
-    await vi.importActual<typeof import("../channels/message/send.js")>(
-      "../channels/message/send.js",
-    )
-  ).durableMessageBatchMayHaveReachedRecipient,
+vi.mock("../channels/message/runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../channels/message/runtime.js")>()),
   sendDurableMessageBatchCore: mocks.sendDurableMessageBatchCore,
 }));
 
