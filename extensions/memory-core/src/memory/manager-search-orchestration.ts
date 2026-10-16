@@ -203,10 +203,7 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
             { allowEmbeddingBootstrapFallback: true },
           );
         } catch (err) {
-          if (
-            shouldUpgradeProviderKey ||
-            (err instanceof WorkerTaskError && err.code === "overloaded")
-          ) {
+          if (err instanceof WorkerTaskError && err.code === "overloaded") {
             throw err;
           }
           if (readErrorName(err) === "DatabaseSearchCapabilityUnavailableError") {
