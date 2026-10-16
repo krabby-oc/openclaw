@@ -88,6 +88,9 @@ export function createStatusSessionStoreReader(
     async read(storePath: string, agentId?: string) {
       const projection = options.projection;
       if (projection) {
+        if (agentId && readAgentDatabaseAdmissionRefusal(agentId, { env })) {
+          return { path: storePath, count: 0, recent: [] };
+        }
         try {
           do {
             await projection.prepareSelection();
