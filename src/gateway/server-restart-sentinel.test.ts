@@ -201,14 +201,7 @@ const mocks = vi.hoisted(() => {
     attachManagedOutgoingMediaToMessage: vi.fn<AttachManagedOutgoingMediaToMessageMock>(
       async () => true,
     ),
-    sendDurableMessageBatchCore: vi.fn<SendDurableMessageBatchCoreMock>(async (params) => {
-      try {
-        const results = await mocks.deliverOutboundPayloads(params);
-        return { status: "sent", results } as Awaited<ReturnType<SendDurableMessageBatchCoreMock>>;
-      } catch (error) {
-        return { status: "failed", error } as Awaited<ReturnType<SendDurableMessageBatchCoreMock>>;
-      }
-    }),
+    sendDurableMessageBatchCore: vi.fn<SendDurableMessageBatchCoreMock>(),
     inspectDeliveryQueueReceipt: vi.fn<InspectDeliveryQueueReceiptMock>(),
     removeCronRunContinuationSessionIfIdle: vi.fn(async () => {}),
     settleCorrelatedSubagentDelivery: vi.fn(async () => {}),
@@ -481,10 +474,21 @@ vi.mock("../infra/outbound/deliver-queue-admission.js", () => ({
   ),
 }));
 
-vi.mock("../channels/message/runtime.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../channels/message/runtime.js")>()),
-  sendDurableMessageBatchCore: mocks.sendDurableMessageBatchCore,
-}));
+vi.mock("../channels/message/runtime.js", async (importOriginal) => {
+  type SendResult = Awaited<ReturnType<SendDurableMessageBatchCoreMock>>;
+  mocks.sendDurableMessageBatchCore.mockImplementation(async (params) => {
+    try {
+      const results = await mocks.deliverOutboundPayloads(params);
+      return { status: "sent", results } as SendResult;
+    } catch (error) {
+      return { status: "failed", error } as SendResult;
+    }
+  });
+  return {
+    ...(await importOriginal<typeof import("../channels/message/runtime.js")>()),
+    sendDurableMessageBatchCore: mocks.sendDurableMessageBatchCore,
+  };
+});
 
 vi.mock("./server-restart-update-run.js", async () => {
   const actual = await vi.importActual<typeof import("./server-restart-update-run.js")>(
