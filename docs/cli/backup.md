@@ -80,7 +80,10 @@ Archive verification checks each matched set without connecting to PostgreSQL.
 Archive restore uses the active configuration's PostgreSQL connection to load
 fresh namespaces and replace only the staged anchors. Select PostgreSQL and
 configure its destination connection in the active config before restoring;
-stop the Gateway first. Live namespaces stay unchanged.
+stop the Gateway first. Live namespaces stay unchanged. A failed restore removes
+the fresh namespaces it created. A successful restore consumes only the matched
+export's `manifest.json`, `anchor.sqlite`, and `database.sqlite` files so a later
+backup captures the restored stores afresh; neighboring user files are preserved.
 Existing format-1 SQLite snapshots remain readable. See
 [Database engines](/reference/database-engines#anchors-and-backups) for matched
 restore and update-recovery behavior.

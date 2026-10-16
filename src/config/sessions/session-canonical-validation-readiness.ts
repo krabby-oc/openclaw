@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { withEngineStoreAdmission } from "../../infra/database-engine/admission-scope.js";
 import { isGatewayExternallySupervised } from "../../infra/gateway-supervision.js";
 import { runSqliteReadOperationSync } from "../../infra/sqlite-schema-facts.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -51,7 +52,7 @@ export async function certifySessionCanonicalValidationPending(
   if (isIncognitoOpenClawAgentSqlitePath(pathname, options)) {
     return;
   }
-  const native = retainOpenClawAgentDatabaseReadOnly(options);
+  const native = withEngineStoreAdmission(() => retainOpenClawAgentDatabaseReadOnly(options));
   if (!native.found) {
     return;
   }
@@ -60,14 +61,16 @@ export async function certifySessionCanonicalValidationPending(
   const drainKey = readOpenClawAgentDatabaseIdentity(database).incarnation;
   let oversizedRows = 0;
   try {
-    const readiness = runSqliteReadOperationSync(database.db, () => {
-      loadOpenClawAgentCanonicalValidationReceipt(database);
-      const initialize = !hasOpenClawAgentCanonicalValidation(database);
-      return {
-        initialize,
-        hasWork: initialize || hasPendingCanonicalSessionValidation(database),
-      };
-    });
+    const readiness = withEngineStoreAdmission(() =>
+      runSqliteReadOperationSync(database.db, () => {
+        loadOpenClawAgentCanonicalValidationReceipt(database);
+        const initialize = !hasOpenClawAgentCanonicalValidation(database);
+        return {
+          initialize,
+          hasWork: initialize || hasPendingCanonicalSessionValidation(database),
+        };
+      }),
+    );
     if (!readiness.hasWork) {
       return;
     }

@@ -145,6 +145,7 @@ export function openBackupSnapshotImage(
   const open = (pathname: string) => {
     const database = openNodeSqliteDatabase(pathname, { allowExtension: true, readOnly: true });
     try {
+      // sqlite-allow-raw: harden the private untrusted snapshot before schema/role inspection.
       database.exec("PRAGMA query_only = ON; PRAGMA trusted_schema = OFF;");
       return database;
     } catch (error) {
@@ -198,38 +199,62 @@ export async function restoreBackupPostgresSnapshots(
   if (snapshots.length === 0) {
     return;
   }
-  const { preparePostgresRestore, runOfflineDatabaseBackup } =
+  const { discardPostgresRestores, preparePostgresRestore, runOfflineDatabaseBackup } =
     await import("../snapshot/database-backup.js");
   await runOfflineDatabaseBackup(
     path.join(targetPath, snapshots[0]!.anchorArchivePath),
     async ({ config, assertCurrent }) => {
       const prepared = new Map<string, string>();
-      for (const snapshot of snapshots) {
-        const directory = path.join(targetPath, snapshot.directoryArchivePath);
-        const { source } = await verifyBackupPostgresSnapshot(targetPath, snapshot);
-        const identity = `${source.storeId}:${source.namespace}`;
-        const target = path.join(targetPath, snapshot.anchorArchivePath);
-        const previous = prepared.get(identity);
-        assertCurrent();
-        if (previous) {
-          await fs.copyFile(previous, target);
-          continue;
-        }
-        const staging = `${target}.restore-${randomUUID()}`;
-        try {
-          await preparePostgresRestore({
-            directory,
-            anchorPath: staging,
-            config,
-            profile: "user-backup",
-            assertCurrent,
-          });
+      const namespaces: string[] = [];
+      try {
+        for (const snapshot of snapshots) {
+          const directory = path.join(targetPath, snapshot.directoryArchivePath);
+          const { source } = await verifyBackupPostgresSnapshot(targetPath, snapshot);
+          const identity = `${source.storeId}:${source.namespace}`;
+          const target = path.join(targetPath, snapshot.anchorArchivePath);
+          const previous = prepared.get(identity);
           assertCurrent();
-          await fs.rename(staging, target);
-          prepared.set(identity, target);
-        } finally {
-          await fs.rm(staging, { force: true });
+          if (previous) {
+            await fs.copyFile(previous, target);
+            continue;
+          }
+          const staging = `${target}.restore-${randomUUID()}`;
+          try {
+            const restored = await preparePostgresRestore({
+              directory,
+              anchorPath: staging,
+              config,
+              profile: "user-backup",
+              assertCurrent,
+            });
+            namespaces.push(restored.namespace);
+            assertCurrent();
+            await fs.rename(staging, target);
+            prepared.set(identity, target);
+          } finally {
+            await fs.rm(staging, { force: true });
+          }
         }
+        // Consume only the verified capsule members; neighboring user files remain opaque.
+        for (const snapshot of snapshots) {
+          for (const name of ["manifest.json", "anchor.sqlite", "database.sqlite"]) {
+            await fs.unlink(path.join(targetPath, snapshot.directoryArchivePath, name));
+          }
+        }
+      } catch (error) {
+        try {
+          await discardPostgresRestores(config, namespaces);
+        } catch (cleanupError) {
+          // oxlint-disable-next-line preserve-caught-error -- AggregateError.errors retains cleanup failure.
+          throw new AggregateError(
+            [error, cleanupError],
+            "PostgreSQL restore and cleanup failed.",
+            {
+              cause: error,
+            },
+          );
+        }
+        throw error;
       }
     },
   );
