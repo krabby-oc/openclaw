@@ -32,10 +32,7 @@ import {
   replaceSessionEntry,
   replaceSessionEntrySync,
 } from "../../config/sessions/session-accessor.js";
-import {
-  publishSystemEventStoreConfig,
-  resolvePhysicalSessionStorePath,
-} from "../../config/sessions/session-store-path.js";
+import { publishSystemEventStoreConfig } from "../../config/sessions/session-store-path.js";
 import {
   captureExecRequestOwners,
   withExecRequestTurn,
@@ -203,15 +200,19 @@ it.each([false, true])(
 );
 
 describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) => {
-  const stop = (state: Awaited<ReturnType<typeof setupStop>>) =>
-    pathKind === "fast" ? tryFastAbortFromMessage(state) : handleStopCommand(state.params, true);
-  const stopCurrent = (
+  const stop = (
     state: Awaited<ReturnType<typeof setupStop>>,
-    isCommandTargetCurrent: NonNullable<HandleCommandsParams["opts"]>["isCommandTargetCurrent"],
-  ) =>
-    pathKind === "fast"
-      ? tryFastAbortFromMessage({ ...state, isCommandTargetCurrent })
-      : handleStopCommand({ ...state.params, opts: { isCommandTargetCurrent } }, true);
+    overrides: Partial<Omit<HandleCommandsParams, "ctx">> & { ctx?: typeof state.ctx } = {},
+  ) => {
+    const params = { ...state.params, ...overrides };
+    return pathKind === "fast"
+      ? tryFastAbortFromMessage({
+          cfg: params.cfg,
+          ctx: overrides.ctx ?? state.ctx,
+          isCommandTargetCurrent: params.opts?.isCommandTargetCurrent,
+        })
+      : handleStopCommand(params, true);
+  };
   const stoppedResult = (aborted = true) =>
     pathKind === "fast"
       ? { handled: true, aborted }
@@ -316,19 +317,14 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
         if (phase === "cleanup-error") {
           const childKey = `agent:main:subagent:${childRunId}`;
           const childSessionId = `session-${childRunId}`;
-          await replaceSessionEntry(
-            { storePath: state.storePath, sessionKey: childKey },
-            { sessionId: childSessionId, updatedAt: Date.now() },
-          );
           const childEntry = expectDefined(
-            loadSessionEntry({ storePath: state.storePath, sessionKey: childKey }),
+            await replaceSessionEntry(
+              { storePath: state.storePath, sessionKey: childKey },
+              { sessionId: childSessionId, updatedAt: Date.now() },
+            ),
             "selected child session",
           );
           publishSystemEventStoreConfig(state.cfg);
-          const controllerStorePath = resolvePhysicalSessionStorePath(
-            { sessionKey, agentId: "main" },
-            state.cfg,
-          );
           await addSubagentRunForTests({
             runId: childRunId,
             childSessionKey: childKey,
@@ -339,12 +335,7 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
             },
             requesterSessionKey: sessionKey,
             requesterAgentId: "main",
-            requesterDisplayKey: sessionKey,
-            requesterStorePath: controllerStorePath,
             controllerSessionKey: sessionKey,
-            controllerStorePath,
-            task: "selected child survives no accepted Stop",
-            cleanup: "keep",
             expectsCompletionMessage: false,
           });
           child = operationFor({
@@ -361,15 +352,10 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
           child.setPhase("running");
         }
         // Denied and stale channel dispatch must leave the real command untouched.
-        await (pathKind === "fast"
-          ? tryFastAbortFromMessage({
-              ...state,
-              cfg: { ...state.cfg, commands: { allowFrom: { "*": [] } } },
-            })
-          : handleStopCommand(
-              { ...state.params, command: { ...state.params.command, isAuthorizedSender: false } },
-              true,
-            ));
+        await stop(state, {
+          cfg: { ...state.cfg, commands: { allowFrom: { "*": [] } } },
+          command: { ...state.params.command, isAuthorizedSender: false },
+        });
         expect(ordinaryCommand.cancellationRequested).not.toBe(true);
         let staleCurrent: NonNullable<
           HandleCommandsParams["opts"]
@@ -383,7 +369,9 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
             sessionSource: current.source,
           });
         }
-        await expect(stopCurrent(state, staleCurrent)).rejects.toThrow("selected session changed");
+        await expect(
+          stop(state, { opts: { isCommandTargetCurrent: staleCurrent } }),
+        ).rejects.toThrow("selected session changed");
         expect(ordinaryCommand.cancellationRequested).not.toBe(true);
         expect(child?.abortSignal.aborted).not.toBe(true);
         if (pathKind === "fast" && phase === "backend-error") {
@@ -600,21 +588,15 @@ describe.each(["fast", "command"] as const)("%s Stop current owner", (pathKind) 
           enqueueFollowupRun(globalKey, followup, queueSettings, "none");
           return followup;
         });
-        const result = await (pathKind === "fast"
-          ? tryFastAbortFromMessage({ cfg, ctx, isCommandTargetCurrent })
-          : handleStopCommand(
-              {
-                ...state.params,
-                cfg,
-                ctx,
-                agentId,
-                sessionKey: globalKey,
-                sessionStore: { [globalKey]: state.entry },
-                storePath,
-                opts: { isCommandTargetCurrent },
-              },
-              true,
-            ));
+        const result = await stop(state, {
+          cfg,
+          ctx,
+          agentId,
+          sessionKey: globalKey,
+          sessionStore: { [globalKey]: state.entry },
+          storePath,
+          opts: { isCommandTargetCurrent },
+        });
         expect.soft(operation.abortSignal.aborted).toBe(ownsActiveRun);
         expect.soft(getExistingFollowupQueue(globalKey)?.items).toEqual([followups[1]]);
         expect(result).toMatchObject(stoppedResult(ownsActiveRun));

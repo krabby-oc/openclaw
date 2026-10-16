@@ -177,23 +177,13 @@ describe("abort handling", () => {
   const abortFixture = useChatAbortRegistryFixture();
   const trackedAbortMemoryKeys = new Set<string>();
 
-  async function writeSessionStore(storePath: string, sessionIdsByKey: Record<string, string>) {
-    await Promise.all(
-      Object.entries(sessionIdsByKey).map(([sessionKey, sessionId]) =>
-        replaceSessionEntry({ storePath, sessionKey }, { sessionId, updatedAt: Date.now() }),
-      ),
-    );
-  }
-
-  async function createAbortConfig(sessionIdsByKey?: Record<string, string>) {
+  async function createAbortConfig(sessionIdsByKey: Record<string, string> = {}) {
     const root = abortFixture.stateDir;
     const storePath = path.join(root, "sessions.json");
     const cfg: OpenClawConfig = { session: { store: storePath } };
-    if (sessionIdsByKey) {
-      for (const sessionKey of Object.keys(sessionIdsByKey)) {
-        trackedAbortMemoryKeys.add(sessionKey);
-      }
-      await writeSessionStore(storePath, sessionIdsByKey);
+    for (const [sessionKey, sessionId] of Object.entries(sessionIdsByKey)) {
+      trackedAbortMemoryKeys.add(sessionKey);
+      await replaceSessionEntry({ storePath, sessionKey }, { sessionId, updatedAt: Date.now() });
     }
     return { root, storePath, cfg };
   }
@@ -477,22 +467,14 @@ describe("abort handling", () => {
     let replacement: ReturnType<typeof createReplyOperation> | undefined;
     try {
       await entered.promise;
-      const signaledBeforeAcpWait = native.abortSignal.aborted;
-      const queueClearedBeforeAcpWait = getFollowupQueueDepth(sessionKey) === 0;
+      expect(native.abortSignal.aborted).toBe(true);
+      expect(getFollowupQueueDepth(sessionKey)).toBe(0);
       native.complete();
       replacement = createOperation(sessionKey, "replacement-session");
       attachStreamingBackend(replacement);
       proceed.resolve();
       await pending;
-      expect(
-        signaledBeforeAcpWait,
-        "native parent must be signaled before the independent ACP await",
-      ).toBe(true);
-      expect(queueClearedBeforeAcpWait).toBe(true);
-      expect(
-        replacement.abortSignal.aborted,
-        "do not rediscover a replacement parent after ACP settles",
-      ).toBe(false);
+      expect(replacement.abortSignal.aborted).toBe(false);
     } finally {
       proceed.resolve();
       await pending;
