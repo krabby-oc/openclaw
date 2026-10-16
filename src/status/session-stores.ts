@@ -100,12 +100,21 @@ export function createStatusSessionStoreReader(
           const selected = paths.map((path) => {
             let store = stores.get(path);
             if (!store) {
-              store = { ...summarizeProjectionRows(projection, path, agentIds, recentLimit), path };
-              stores.set(path, store);
+              let snapshot: SessionStoreSummary;
+              try {
+                snapshot = summarizeProjectionRows(projection, path, agentIds, recentLimit);
+              } catch (error) {
+                if (!options.recoverReadError) {
+                  throw error;
+                }
+                snapshot = options.recoverReadError(error);
+              }
+              store = { ...snapshot, path };
             }
-            return agentId ? store.byAgent.get(agentId) : store;
+            return store;
           });
-          let recent = selected.flatMap((summary) => summary?.recent ?? []);
+          const summaries = selected.map((store) => (agentId ? store.byAgent.get(agentId) : store));
+          let recent = summaries.flatMap((summary) => summary?.recent ?? []);
           if (selected.length > 1) {
             recent.sort(
               (left, right) =>
@@ -120,12 +129,18 @@ export function createStatusSessionStoreReader(
           }
           const summary = {
             path: paths.length === 1 ? paths[0]! : storePath,
-            count: selected.reduce((count, store) => count + (store?.count ?? 0), 0),
+            count: summaries.reduce((count, store) => count + (store?.count ?? 0), 0),
             recent,
           };
           if (performance.now() - sliceStartedAt >= SESSION_STORE_READ_SLICE_MS) {
             await yieldToEventLoop();
             sliceStartedAt = performance.now();
+          }
+          if (agentId && readAgentDatabaseAdmissionRefusal(agentId, { env })) {
+            return { path: summary.path, count: 0, recent: [] };
+          }
+          for (const store of selected) {
+            stores.set(store.path, store);
           }
           return summary;
         } catch (error) {

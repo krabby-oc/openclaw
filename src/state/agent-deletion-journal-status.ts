@@ -22,7 +22,7 @@ type PreparedDeletionDiscovery = Exclude<
 const discoveryKey: SqliteDatabaseAdmissionKey<PreparedDeletionDiscovery | null> = {
   name: "agent.deletion-discovery",
   schemaDependent: true,
-  // These values only cross the paired database admission transport.
+  // SAFETY: These typed owner facts only cross the paired database admission transport.
   read: (value) => (isRecord(value) ? (value as PreparedDeletionDiscovery) : undefined),
 };
 
