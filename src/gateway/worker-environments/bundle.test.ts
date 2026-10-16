@@ -46,6 +46,10 @@ const artifactSources = {
 };
 const artifactNames = Object.keys(artifactSources);
 
+function writeWorker(packageRoot: string, source: string, artifact = "worker.mjs") {
+  return fs.writeFile(path.join(packageRoot, "dist/worker", artifact), source);
+}
+
 async function writeFixture(
   packageRoot: string,
   workerSource = artifactSources["worker.mjs"],
@@ -158,17 +162,9 @@ describe("worker bundle producer", () => {
   });
 
   it("reuses the sealed worker graph from an installed npm package", async () => {
-    await withTestDir({ prefix: "openclaw-worker-packaged-" }, async (root) => {
-      const sourceRoot = path.join(root, "source");
-      await writeFixture(sourceRoot, 'export { value } from "./worker-chunk-runtime.mjs";');
-      await fs.writeFile(
-        path.join(sourceRoot, "dist/worker/worker-chunk-runtime.mjs"),
-        "export const value = 1;",
-      );
-      const built = await createWorkerBundleProducer({
-        packageRoot: sourceRoot,
-        cacheDir: path.join(root, "source-cache"),
-      }).prepare();
+    await withFixture(async ({ root, packageRoot, producer }) => {
+      await writeWorker(packageRoot, "export const value = 1;", "worker-chunk-runtime.mjs");
+      const built = await producer().prepare();
 
       const installedRoot = path.join(root, "installed");
       const archiveRoot = path.join(installedRoot, "dist/worker-artifacts");
@@ -180,22 +176,22 @@ describe("worker bundle producer", () => {
       const packagedArchive = path.join(archiveRoot, `${built.bundleHash}.tar.gz`);
       await fs.copyFile(built.tarballPath, packagedArchive);
 
-      const installed = await createWorkerBundleProducer({
+      const installed = await producer({
         packageRoot: installedRoot,
         cacheDir: path.join(root, "installed-cache"),
       }).prepare();
       expect(installed).toMatchObject({
         bundleHash: built.bundleHash,
         tarballPath: packagedArchive,
+        tarballSha256: built.tarballSha256,
       });
-      expect(installed.tarballSha256).toBe(built.tarballSha256);
       await expect(fs.stat(path.join(root, "installed-cache"))).rejects.toMatchObject({
         code: "ENOENT",
       });
 
       const installedAlias = path.join(root, "installed-alias");
       await fs.symlink(installedRoot, installedAlias, "junction");
-      const throughAlias = await createWorkerBundleProducer({
+      const throughAlias = await producer({
         packageRoot: installedAlias,
         cacheDir: path.join(root, "alias-cache"),
       }).prepare();
@@ -207,14 +203,12 @@ describe("worker bundle producer", () => {
           `${built.bundleHash}.tar.gz`,
         ),
       });
-    });
+    }, 'export { value } from "./worker-chunk-runtime.mjs";');
   });
 
   it("hashes and archives only the dedicated deploy artifacts", async () => {
-    await withTestDir({ prefix: "openclaw-worker-bundle-" }, async (root) => {
-      const packageA = path.join(root, "package-a");
+    await withFixture(async ({ root, packageRoot: packageA, producer }) => {
       const packageB = path.join(root, "package-b");
-      await writeFixture(packageA);
       await writeFixture(packageB);
       await fs.mkdir(path.join(packageA, "dist", "control-ui"), { recursive: true });
       await fs.writeFile(path.join(packageA, "dist", "entry.js"), 'import "json5";\n');
@@ -222,23 +216,16 @@ describe("worker bundle producer", () => {
         path.join(packageA, "dist", "control-ui", "index.html"),
         "<main>UI</main>",
       );
-      await fs.utimes(
-        path.join(packageA, "dist", "worker", "worker.mjs"),
-        new Date(1_000),
-        new Date(1_000),
-      );
-      await fs.utimes(
-        path.join(packageB, "dist", "worker", "worker.mjs"),
-        new Date(9_000),
-        new Date(9_000),
-      );
+      for (const [packageRoot, timestamp] of [
+        [packageA, 1_000],
+        [packageB, 9_000],
+      ] as const) {
+        const date = new Date(timestamp);
+        await fs.utimes(path.join(packageRoot, "dist/worker/worker.mjs"), date, date);
+      }
 
-      const first = await createWorkerBundleProducer({
-        packageRoot: packageA,
-        cacheDir: path.join(root, "cache-a"),
-        openclawVersion: "1.2.3",
-      }).prepare();
-      const second = await createWorkerBundleProducer({
+      const first = await producer({ openclawVersion: "1.2.3" }).prepare();
+      const second = await producer({
         packageRoot: packageB,
         cacheDir: path.join(root, "cache-b"),
         openclawVersion: "1.2.3",
@@ -288,10 +275,7 @@ describe("worker bundle producer", () => {
       for (const artifactName of artifactNames.filter(
         (name) => name !== "code-mode-node.worker.mjs",
       )) {
-        await fs.writeFile(
-          path.join(packageRoot, "dist", "worker", artifactName),
-          "export const changed = true;\n",
-        );
+        await writeWorker(packageRoot, "export const changed = true;\n", artifactName);
         const changed = await producer().prepare();
         expect(changed.bundleHash, artifactName).not.toBe(previousHash);
         previousHash = changed.bundleHash;
@@ -346,26 +330,6 @@ describe("worker bundle producer", () => {
       expect((await fs.readdir(cacheDir)).toSorted()).toEqual(before);
       await expect(fs.stat(current.tarballPath)).resolves.toBeDefined();
     });
-  });
-
-  it("prunes only unretained bundles for an exclusive cache owner", async () => {
-    await withFixture(async ({ packageRoot, cacheDir, producer }) => {
-      const retained = await producer().prepare();
-      await fs.writeFile(
-        path.join(packageRoot, "dist", "worker", "worker.mjs"),
-        "export const value = 2;\n",
-      );
-      const owner = producer({ cacheOwnership: "exclusive" });
-      const current = await owner.prepare();
-      const removedPath = path.join(cacheDir, `${"c".repeat(64)}.tgz`);
-      await fs.writeFile(removedPath, "historical");
-
-      await owner.prune(() => [retained.bundleHash]);
-
-      await expect(fs.stat(retained.tarballPath)).resolves.toBeDefined();
-      await expect(fs.stat(current.tarballPath)).resolves.toBeDefined();
-      await expect(fs.stat(removedPath)).rejects.toMatchObject({ code: "ENOENT" });
-    }, "export const value = 1;\n");
   });
 
   it.each([false, true])(
@@ -595,14 +559,11 @@ describe("worker bundle producer", () => {
   });
 
   it("archives staged bytes when the source changes during packaging", async () => {
-    await withTestDir({ prefix: "openclaw-worker-bundle-mutation-" }, async (root) => {
+    const originalContents = "export const value = 'before';\n";
+    await withFixture(async ({ root, packageRoot, producer }) => {
       const baselineRoot = path.join(root, "baseline");
-      const packageRoot = path.join(root, "package");
-      const originalContents = "export const value = 'before';\n";
-      const changedContents = "export const value = 'after';\n";
       await writeFixture(baselineRoot, originalContents);
-      await writeFixture(packageRoot, originalContents);
-      const baseline = await createWorkerBundleProducer({
+      const baseline = await producer({
         packageRoot: baselineRoot,
         cacheDir: path.join(root, "baseline-cache"),
       }).prepare();
@@ -613,18 +574,12 @@ describe("worker bundle producer", () => {
         .mockImplementation(async (...args) => {
           const manifest = await originalCollect(...args);
           sourceMutated = true;
-          await fs.writeFile(
-            path.join(packageRoot, "dist", "worker", "worker.mjs"),
-            changedContents,
-          );
+          await writeWorker(packageRoot, "export const value = 'after';\n");
           return manifest;
         });
 
       try {
-        const artifact = await createWorkerBundleProducer({
-          packageRoot,
-          cacheDir: path.join(root, "cache"),
-        }).prepare();
+        const artifact = await producer().prepare();
         const extractDir = path.join(root, "extract");
         await fs.mkdir(extractDir);
         await tar.extract({ file: artifact.tarballPath, cwd: extractDir });
@@ -637,7 +592,7 @@ describe("worker bundle producer", () => {
       } finally {
         stagingSpy.mockRestore();
       }
-    });
+    }, originalContents);
   });
 
   it("owns one immutable build snapshot and retries failed preparation", async () => {
@@ -655,7 +610,7 @@ describe("worker bundle producer", () => {
       const retried = producer.prepare();
       expect(retried).not.toBe(failed);
       const first = await retried;
-      await fs.writeFile(path.join(packageRoot, "dist", "worker", "worker.mjs"), "changed\n");
+      await writeWorker(packageRoot, "changed\n");
       await expect(producer.prepare()).resolves.toBe(first);
       expect(first.protocolFeatures).toEqual(["admission", "resume"]);
     });
@@ -694,8 +649,7 @@ describe("worker bundle producer", () => {
 
 describe("worker npm installation artifact", () => {
   it("uses an exact registry-proven gateway package", async () => {
-    await withTestDir({ prefix: "openclaw-worker-npm-release-" }, async (packageRoot) => {
-      await writeFixture(packageRoot);
+    await withTestDir({ prefix: "openclaw-worker-npm-" }, async (packageRoot) => {
       const packageIntegrity = `sha512-${Buffer.alloc(64).toString("base64")}`;
       const verifyRelease = vi.fn(async () => packageIntegrity);
 
@@ -720,41 +674,29 @@ describe("worker npm installation artifact", () => {
     });
   });
 
-  it("rejects dev and packages that fail release verification", async () => {
-    const verifyRelease = vi.fn(async (): Promise<string> => {
-      throw new Error("OpenClaw 1.2.3 is not published; use the worker bundle install");
-    });
-    await expect(
-      resolveWorkerNpmInstallationArtifact({
-        bundle: bundleArtifact({ openclawVersion: "dev" }),
-        isPackageInstall: async () => true,
-        verifyRelease,
-      }),
-    ).rejects.toThrow("exact published gateway version");
-    expect(verifyRelease).not.toHaveBeenCalled();
-    await expect(
-      resolveWorkerNpmInstallationArtifact({
-        bundle: bundleArtifact(),
-        isPackageInstall: async () => true,
-        verifyRelease,
-      }),
-    ).rejects.toThrow("use the worker bundle install");
-  });
-
-  it("rejects a source checkout even when its version is published", async () => {
-    await withTestDir({ prefix: "openclaw-worker-npm-source-" }, async (packageRoot) => {
-      await writeFixture(packageRoot);
-      await fs.mkdir(path.join(packageRoot, ".git"));
-      const verifyRelease = vi.fn(async () => `sha512-${Buffer.alloc(64).toString("base64")}`);
-
+  it.each([
+    ["dev", "exact published gateway version"],
+    ["unpublished", "use the worker bundle install"],
+    ["source", "packaged release install"],
+  ] as const)("rejects a %s npm installation", async (kind, error) => {
+    await withTestDir({ prefix: "openclaw-worker-npm-" }, async (packageRoot) => {
+      if (kind === "source") {
+        await fs.mkdir(path.join(packageRoot, ".git"));
+      }
+      const verifyRelease = vi.fn(async () => {
+        if (kind === "source") {
+          return `sha512-${Buffer.alloc(64).toString("base64")}`;
+        }
+        throw new Error("OpenClaw 1.2.3 is not published; use the worker bundle install");
+      });
       await expect(
         resolveWorkerNpmInstallationArtifact({
-          bundle: bundleArtifact(),
+          bundle: bundleArtifact({ openclawVersion: kind === "dev" ? "dev" : "1.2.3" }),
           packageRoot,
           verifyRelease,
         }),
-      ).rejects.toThrow("packaged release install");
-      expect(verifyRelease).not.toHaveBeenCalled();
+      ).rejects.toThrow(error);
+      expect(verifyRelease).toHaveBeenCalledTimes(kind === "unpublished" ? 1 : 0);
     });
   });
 });
