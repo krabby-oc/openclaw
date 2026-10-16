@@ -17,7 +17,11 @@ export async function readMemoryCoreDreamingRuns(params: {
   const lastRun = async () => {
     try {
       const { readMemoryHostEventRecords } = await import("openclaw/plugin-sdk/memory-host-events");
-      const events = await readMemoryHostEventRecords({ workspaceDir: params.workspaceDir });
+      const events = await readMemoryHostEventRecords({
+        workspaceDir: params.workspaceDir,
+        type: "memory.dream.completed",
+        limit: 1,
+      });
       // The bounded journal records phase outcomes, not every sweep or skipped attempt.
       const event = events.findLast((entry) => entry.type === "memory.dream.completed");
       return event
