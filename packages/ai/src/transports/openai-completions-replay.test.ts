@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { makeTextToolResult } from "../../../../test/helpers/text-tool-result.js";
-import type { Model } from "../types.js";
 import { buildOpenAICompletionsParams } from "./openai-completions-params.js";
 import {
   openRouterModel,
@@ -17,8 +16,51 @@ import {
   customReasoningProxyModel,
   getAssistantMessage,
   buildReplayParams,
+  makeCompletionsModel,
 } from "./openai-completions.test-support.js";
 import { getCompat } from "./openai-transport-params.js";
+
+function expectAbsent(
+  assistant: unknown,
+  fields = ["reasoning_details", "reasoning", "reasoning_text"],
+) {
+  for (const field of fields) {
+    expect(assistant).not.toHaveProperty(field);
+  }
+}
+
+function toolReplay(
+  model: string,
+  stopReason: string,
+  content: unknown[],
+  toolName: string,
+  result: string,
+  user: string,
+  next: string,
+) {
+  return buildOpenAICompletionsParams(
+    openRouterModel,
+    {
+      systemPrompt: "system",
+      messages: [
+        { role: "user", content: user },
+        {
+          role: "assistant",
+          provider: "openrouter",
+          api: "openai-completions",
+          model,
+          stopReason,
+          timestamp: 0,
+          content,
+        },
+        makeTextToolResult("call_1", toolName, result, false, 1),
+        { role: "user", content: next },
+      ],
+      tools: [],
+    } as never,
+    undefined,
+  ) as { messages: Array<Record<string, unknown>> };
+}
 
 describe("buildOpenAICompletionsParams sanitizes reasoning replay fields", () => {
   it.each(["reasoning_text"])(
@@ -26,10 +68,12 @@ describe("buildOpenAICompletionsParams sanitizes reasoning replay fields", () =>
     (thinkingSignature) => {
       const assistant = getAssistantMessage(buildReplayParams(openAIModel, thinkingSignature));
 
-      expect(assistant).not.toHaveProperty("reasoning_details");
-      expect(assistant).not.toHaveProperty("reasoning_content");
-      expect(assistant).not.toHaveProperty("reasoning");
-      expect(assistant).not.toHaveProperty("reasoning_text");
+      expectAbsent(assistant, [
+        "reasoning_details",
+        "reasoning_content",
+        "reasoning",
+        "reasoning_text",
+      ]);
     },
   );
 
@@ -52,48 +96,28 @@ describe("buildOpenAICompletionsParams sanitizes reasoning replay fields", () =>
     ]) {
       const assistant = getAssistantMessage(buildReplayParams(model, thinkingSignature));
 
-      expect(assistant).not.toHaveProperty("reasoning_details");
-      expect(assistant).not.toHaveProperty("reasoning_content");
-      expect(assistant).not.toHaveProperty("reasoning");
-      expect(assistant).not.toHaveProperty("reasoning_text");
+      expectAbsent(assistant, [
+        "reasoning_details",
+        "reasoning_content",
+        "reasoning",
+        "reasoning_text",
+      ]);
     }
   });
 
   it("strips empty-string reasoning_content from OpenRouter assistant replay", () => {
-    const params = buildOpenAICompletionsParams(
-      openRouterModel,
-      {
-        systemPrompt: "system",
-        messages: [
-          { role: "user", content: "read config" },
-          {
-            role: "assistant",
-            provider: "openrouter",
-            api: "openai-completions",
-            model: "deepseek/deepseek-v4-pro",
-            stopReason: "toolUse",
-            timestamp: 0,
-            content: [
-              {
-                type: "thinking",
-                thinking: "",
-                thinkingSignature: "reasoning_content",
-              },
-              {
-                type: "toolCall",
-                id: "call_1",
-                name: "read_file",
-                arguments: { path: "config.json" },
-              },
-            ],
-          },
-          makeTextToolResult("call_1", "read_file", "{ }", false, 1),
-          { role: "user", content: "continue" },
-        ],
-        tools: [],
-      } as never,
-      undefined,
-    ) as { messages: Array<Record<string, unknown>> };
+    const params = toolReplay(
+      "deepseek/deepseek-v4-pro",
+      "toolUse",
+      [
+        { type: "thinking", thinking: "", thinkingSignature: "reasoning_content" },
+        { type: "toolCall", id: "call_1", name: "read_file", arguments: { path: "config.json" } },
+      ],
+      "read_file",
+      "{ }",
+      "read config",
+      "continue",
+    );
 
     const assistantMessages = params.messages.filter((msg) => msg.role === "assistant");
     for (const msg of assistantMessages) {
@@ -115,9 +139,7 @@ describe("buildOpenAICompletionsParams sanitizes reasoning replay fields", () =>
     (_label, model) => {
       const assistant = getAssistantMessage(buildReplayParams(model, "reasoning_details"));
 
-      expect(assistant).not.toHaveProperty("reasoning_details");
-      expect(assistant).not.toHaveProperty("reasoning");
-      expect(assistant).not.toHaveProperty("reasoning_text");
+      expectAbsent(assistant);
     },
   );
 
@@ -159,75 +181,46 @@ describe("buildOpenAICompletionsParams sanitizes reasoning replay fields", () =>
 
     expect(assistant.reasoning_content).toBe("Need to answer politely.");
     if (assertSanitizedFields) {
-      expect(assistant).not.toHaveProperty("reasoning_details");
-      expect(assistant).not.toHaveProperty("reasoning");
-      expect(assistant).not.toHaveProperty("reasoning_text");
+      expectAbsent(assistant);
     }
   });
 
-  // Regression for #87575: OpenCode Zen exposes DeepSeek V4 with a `-free`
-  // tier suffix that does not change the upstream replay contract. Without
-  // matching the base id we stripped reasoning_content from the follow-up
-  // request and DeepSeek rejected the assistant turn with HTTP 400.
-  it.each([
-    [
-      "OpenCode Zen DeepSeek V4 Flash Free",
-      {
-        id: "deepseek-v4-flash-free",
-        name: "DeepSeek V4 Flash Free",
-        api: "openai-completions" as const,
-        provider: "opencode",
-        baseUrl: "https://opencode.ai/zen/v1",
-        reasoning: false,
-        input: ["text"] as ("text" | "image")[],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 65_536,
-        maxTokens: 8192,
-      },
-    ],
-  ] as const)("preserves reasoning_content replay despite the %s tier suffix", (_label, model) => {
-    const assistant = getAssistantMessage(
-      buildReplayParams(model as Model<"openai-completions">, "reasoning_content"),
-    );
+  // #87575: the tier suffix must not strip reasoning_content and cause HTTP 400.
+  it("preserves reasoning_content replay despite the OpenCode Zen free tier suffix", () => {
+    const model = makeCompletionsModel({
+      id: "deepseek-v4-flash-free",
+      name: "DeepSeek V4 Flash Free",
+      provider: "opencode",
+      baseUrl: "https://opencode.ai/zen/v1",
+      reasoning: false,
+      contextWindow: 65_536,
+      maxTokens: 8192,
+    });
+    const assistant = getAssistantMessage(buildReplayParams(model, "reasoning_content"));
 
     expect(assistant.reasoning_content).toBe("Need to answer politely.");
-    expect(assistant).not.toHaveProperty("reasoning_details");
-    expect(assistant).not.toHaveProperty("reasoning");
-    expect(assistant).not.toHaveProperty("reasoning_text");
+    expectAbsent(assistant);
   });
 
   it("preserves OpenRouter array reasoning_details from tool-call signatures", () => {
     const reasoningDetail = { type: "reasoning.encrypted", id: "rs_1", data: "ciphertext" };
-    const params = buildOpenAICompletionsParams(
-      openRouterModel,
-      {
-        systemPrompt: "system",
-        messages: [
-          { role: "user", content: "lookup" },
-          {
-            role: "assistant",
-            provider: "openrouter",
-            api: "openai-completions",
-            model: "deepseek/deepseek-v4-flash",
-            stopReason: "stop",
-            timestamp: 0,
-            content: [
-              {
-                type: "toolCall",
-                id: "call_1",
-                name: "lookup",
-                arguments: { query: "weather" },
-                thoughtSignature: JSON.stringify(reasoningDetail),
-              },
-            ],
-          },
-          makeTextToolResult("call_1", "lookup", "sunny", false, 1),
-          { role: "user", content: "answer" },
-        ],
-        tools: [],
-      } as never,
-      undefined,
-    ) as { messages: unknown };
+    const params = toolReplay(
+      "deepseek/deepseek-v4-flash",
+      "stop",
+      [
+        {
+          type: "toolCall",
+          id: "call_1",
+          name: "lookup",
+          arguments: { query: "weather" },
+          thoughtSignature: JSON.stringify(reasoningDetail),
+        },
+      ],
+      "lookup",
+      "sunny",
+      "lookup",
+      "answer",
+    );
 
     const assistant = getAssistantMessage(params);
     expect(assistant.reasoning_details).toEqual([reasoningDetail]);
