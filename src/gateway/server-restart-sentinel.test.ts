@@ -1465,6 +1465,27 @@ describe("scheduleRestartSentinelWake", () => {
     expect(mocks.dispatchGatewayMethodInProcess).not.toHaveBeenCalled();
   });
 
+  it("dead-letters a media send whose outbound owner failed terminally", async () => {
+    const entry = await enqueueGeneratedMedia({
+      messageId: "image:task-outbound-failed:agent-loop",
+      expectedMediaUrls: ["/tmp/proof.png"],
+    });
+    mocks.sendDurableMessageBatchCore.mockResolvedValueOnce({
+      status: "suppressed",
+      reason: "no_visible_result",
+    } as never);
+    mocks.inspectDeliveryQueueReceipt.mockResolvedValueOnce({
+      status: "failed",
+      pendingEntry: null,
+    } as never);
+
+    await expect(deliverGeneratedMedia(entry)).rejects.toThrow(
+      "dead-lettered after ambiguous side effects",
+    );
+
+    expect(mocks.dispatchGatewayMethodInProcess).not.toHaveBeenCalled();
+  });
+
   it("waits for outbound recovery that still owns the media send", async () => {
     const entry = await enqueueGeneratedMedia({
       messageId: "image:task-outbound-owned:agent-loop",

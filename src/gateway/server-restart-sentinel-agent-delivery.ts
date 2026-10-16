@@ -140,10 +140,13 @@ async function sendQueuedGeneratedMedia(params: {
       "queued generated-media send is still owned by outbound delivery recovery",
     );
   }
-  if (durableMessageBatchMayHaveReachedRecipient(result)) {
+  // A terminally failed intent may have sent before failing; a fresh intent
+  // attempt would bypass the outbound owner and could duplicate the media.
+  if (receipt.status === "failed" || durableMessageBatchMayHaveReachedRecipient(result)) {
     log.warn("queued generated-media send has ambiguous attachment side effects", {
       queueId: entry.id,
       status: result.status,
+      receipt: receipt.status,
     });
     return await deadLetterSessionDelivery(
       entry,
