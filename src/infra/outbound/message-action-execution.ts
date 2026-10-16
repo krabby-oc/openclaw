@@ -67,7 +67,7 @@ const MESSAGE_ACTION_RECONCILIATION_TIMEOUT_MS = 60_000;
 const MESSAGE_ACTION_RECONCILIATION_MAX_MS = 9 * 60_000;
 const MESSAGE_ACTION_INITIAL_SEND_TIMEOUT_MAX_MS = 30_000;
 
-export function assertMessageDeliveryCurrent(input: MessageActionInput): void {
+function assertMessageDeliveryCurrent(input: MessageActionInput): void {
   throwIfAborted(input.abortSignal);
   input.assertDirectAdapterHandoff?.();
   input.messageActionAuthorization?.scheduled?.assertCurrent();
