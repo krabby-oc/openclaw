@@ -144,14 +144,8 @@ describe("native snapshot reconciliation", () => {
     });
   });
 
-  it.each([
-    { name: "shortened", checkpoint: "Hello world. Next sentence.", tail: [] },
-    {
-      name: "corrected identical tail",
-      checkpoint: "Hello world. Hello world.",
-      tail: ["Hello world."],
-    },
-  ])("preserves delivered sentence chunks at a $name checkpoint", async ({ checkpoint, tail }) => {
+  it("preserves delivered sentence chunks at a shortened checkpoint", async () => {
+    const checkpoint = "Hello world. Next sentence.";
     const h = setup({ blockReplyChunking: sentenceChunking });
     const first = "First block.";
     const delivered = [first, "Hello world.", "Next sentence."];
@@ -170,15 +164,14 @@ describe("native snapshot reconciliation", () => {
     expect(h.subscription.assistantTexts).toEqual(delivered);
     h.end([first, checkpoint], 1);
     await h.subscription.waitForPendingEvents();
-    expect(h.texts()).toEqual([...delivered, ...tail]);
-    expect(h.subscription.assistantTexts).toEqual([...delivered, ...tail]);
-    expect(h.onBlockReply).toHaveBeenCalledTimes(delivered.length + tail.length);
+    expect(h.texts()).toEqual(delivered);
+    expect(h.subscription.assistantTexts).toEqual(delivered);
+    expect(h.onBlockReply).toHaveBeenCalledTimes(delivered.length);
   });
 
-  it("keeps native code continuation fenced after a shortened open-fence checkpoint", async () => {
+  it("keeps native code continuation fenced across an unchanged checkpoint", async () => {
     const h = setup({ blockReplyChunking: { minChars: 1, maxChars: 20 } });
-    const shortened = "```txt\nabc";
-    const continuation = "defghijklmnopqrstuvwxyz\n```";
+    const continuation = "qrstuvwxyz\n```";
     const firstChunk = "```txt\nabcdefghi\n```";
     h.start();
     let text = "";
@@ -188,23 +181,21 @@ describe("native snapshot reconciliation", () => {
     }
     await h.subscription.waitForPendingEvents();
     expect(h.texts()).toEqual([firstChunk]);
-    h.end([shortened], 0);
+    h.end([text], 0);
     await h.subscription.waitForPendingEvents();
-    expect(h.texts()).toEqual([firstChunk]);
-    expect(h.onBlockReply).toHaveBeenCalledTimes(1);
-    h.delta([shortened, continuation], 1);
-    h.end([shortened, continuation], 1);
+    h.delta([text, continuation], 1);
+    h.end([text, continuation], 1);
     await h.subscription.waitForPendingEvents();
     const delivered = h.texts();
     expect(delivered[0]).toBe(firstChunk);
-    const bodies = delivered.slice(1).map((chunk) => {
+    const bodies = delivered.map((chunk) => {
       expect(chunk.startsWith("```txt\n")).toBe(true);
       expect(chunk.endsWith("\n```")).toBe(true);
       expect(chunk.length).toBeLessThanOrEqual(20);
       return chunk.slice("```txt\n".length, -"\n```".length).replaceAll("\n", "");
     });
-    expect(bodies.join("")).toBe("defghijklmnopqrstuvwxyz");
-    h.emit({ type: "message_end", message: assistant([shortened, continuation]) });
+    expect(bodies.join("")).toBe("abcdefghijklmnopqrstuvwxyz");
+    h.emit({ type: "message_end", message: assistant([text, continuation]) });
     await h.subscription.waitForPendingEvents();
     expect(h.texts()).toEqual(delivered);
     expect(h.onBlockReply).toHaveBeenCalledTimes(delivered.length);

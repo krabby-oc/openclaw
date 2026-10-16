@@ -186,22 +186,15 @@ export function reconcileBlockReplySnapshot(
   const consumed = ctx.blockChunker.consumedLength;
   let oldCode: ReturnType<typeof findCodeRegions> | undefined;
   let nextCode: ReturnType<typeof findCodeRegions> | undefined;
-  const crossesCode = (snapshot: typeof next, offset: number, includeCodeEnd = false) => {
-    if (
-      offset <= 0 ||
-      offset > snapshot.blockText.length ||
-      (offset === snapshot.blockText.length && !includeCodeEnd)
-    ) {
+  const crossesCode = (snapshot: typeof next, offset: number) => {
+    if (offset <= 0 || offset >= snapshot.blockText.length) {
       return false;
     }
     const regions =
       snapshot === previous
         ? (oldCode ??= findCodeRegions(previous.blockText))
         : (nextCode ??= findCodeRegions(next.blockText));
-    return regions.some(
-      (region) =>
-        region.start < offset && (offset < region.end || (includeCodeEnd && offset === region.end)),
-    );
+    return regions.some((region) => region.start < offset && offset < region.end);
   };
   const scopeRetained =
     oldScope.valid &&
@@ -249,79 +242,8 @@ export function reconcileBlockReplySnapshot(
     return;
   }
 
-  let restartIndex = next.parts[0]?.index ?? 0;
-  let restartPrefix = "";
-  for (const part of next.parts) {
-    const index = part.index ?? 0;
-    if (!index || !part.separator) {
-      continue;
-    }
-    const oldBoundary = prefixAt(previous, index);
-    const nextBoundary = prefixAt(next, index);
-    if (
-      oldBoundary === nextBoundary &&
-      previous.blockText.startsWith(oldBoundary) &&
-      next.blockText.startsWith(nextBoundary) &&
-      oldBoundary.length <= oldPrefix.length + consumed &&
-      !crossesCode(previous, oldBoundary.length) &&
-      !crossesCode(next, nextBoundary.length)
-    ) {
-      restartIndex = index;
-      restartPrefix = nextBoundary;
-    }
-  }
-  if (retainedPrefix && nextText.length < consumed && restartPrefix !== next.blockText) {
-    ctx.blockChunker.replace(nextText, 0, retainedPrefix);
-    return;
-  }
-  const sourceBreaks: number[] = [];
-  if (
-    scopeRetained &&
-    oldScope.index === nextScope.index &&
-    oldPrefix === nextPrefix &&
-    consumed > 0
-  ) {
-    const limit = Math.min(oldText.length, nextText.length);
-    let prefixLength = 0;
-    while (
-      prefixLength < limit &&
-      oldText.charCodeAt(prefixLength) === nextText.charCodeAt(prefixLength)
-    ) {
-      prefixLength += 1;
-    }
-    let suffixLength = 0;
-    while (
-      suffixLength < limit - prefixLength &&
-      oldText.charCodeAt(oldText.length - suffixLength - 1) ===
-        nextText.charCodeAt(nextText.length - suffixLength - 1)
-    ) {
-      suffixLength += 1;
-    }
-    const suffixStart = oldText.length - suffixLength;
-    const shift = next.blockText.length - previous.blockText.length;
-    // Preserve chunk boundaries, not delivery claims: repeated source still
-    // passes through the existing payload/custody decision at the recipient.
-    // Include code ends because a later append can continue an unfinished fence.
-    for (const end of ctx.blockChunker.preparedSourceBreaks) {
-      const unchangedPrefix = end <= prefixLength;
-      const oldBoundary = oldPrefix.length + end;
-      const nextBoundary = oldBoundary + (unchangedPrefix ? 0 : shift);
-      if (
-        (!unchangedPrefix && (suffixLength === 0 || end < suffixStart)) ||
-        end > Math.min(consumed, oldText.length) ||
-        nextBoundary <= restartPrefix.length ||
-        crossesCode(previous, oldBoundary, true) ||
-        crossesCode(next, nextBoundary, true)
-      ) {
-        continue;
-      }
-      sourceBreaks.push(nextBoundary - restartPrefix.length);
-    }
-  }
-  ctx.state.blockReplyScopeStart = {
-    contentIndex: restartIndex,
-    itemId: resolveAssistantStreamItemId({ contentIndex: restartIndex, message: next.message }),
-  };
-  ctx.blockChunker.reset(sourceBreaks, restartPrefix.length);
-  ctx.blockChunker.append(next.blockText.slice(restartPrefix.length));
+  // A rewritten, already-delivered source restarts best-effort instead of reconstructing old breaks.
+  ctx.state.blockReplyScopeStart = undefined;
+  ctx.blockChunker.reset();
+  ctx.blockChunker.append(next.blockText);
 }
