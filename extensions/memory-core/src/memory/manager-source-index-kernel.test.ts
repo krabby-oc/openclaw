@@ -565,7 +565,7 @@ describe("memory source index native kernel", () => {
            JOIN memory_index_chunks c ON c.id = v.id
            WHERE v.embedding MATCH ? AND k = 8 ORDER BY c.path`,
         )
-        .all(encodeMemoryEmbedding([1, 0, 0])),
+        .all(Buffer.from(new Float32Array([1, 0, 0]).buffer)),
     ).toEqual(
       Array.from({ length: 8 }, (_, index) => ({
         path: `memory/group-${index}.md`,
