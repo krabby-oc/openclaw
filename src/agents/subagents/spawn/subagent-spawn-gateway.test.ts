@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { OperatorScope } from "../../../gateway/method-scopes.js";
 import { captureGatewayOperatorRunAuthority } from "../../../gateway/operator-run-authority.js";
 import {
   createContext,
@@ -14,6 +15,7 @@ import {
 import { testing as spawnTesting } from "./subagent-spawn.test-support.js";
 
 const startTurn = vi.hoisted(() => vi.fn());
+// mock-isolation: Observe real admission without starting model execution or retaining turn state.
 vi.mock("../../../gateway/agent-turn/agent-turn-service.js", () => ({
   createAgentTurnService: () => ({ startTurn, waitForTurn: vi.fn() }),
 }));
@@ -46,7 +48,7 @@ describe("native subagent Gateway transport ownership", () => {
   it.each<{
     name: string;
     source: string[];
-    explicit?: string[];
+    explicit?: OperatorScope[];
     systemCeiling?: string[];
     expected?: string[];
   }>([

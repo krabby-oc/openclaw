@@ -18,6 +18,7 @@ import { readGlobalSingleton } from "../shared/global-singleton.js";
 import { setUserProfileRole } from "../state/user-profile-writes.worker.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import type { OperatorScope } from "./method-scopes.js";
 import { createGatewayMethodRegistry } from "./methods/registry.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
 import { resolveNodeInvokeRuntimeAuthorityError } from "./server-methods/nodes.invoke-authority.js";
@@ -95,7 +96,7 @@ describe("typed in-process agent authorization", () => {
   it.each<{
     name: string;
     source: string[];
-    explicit?: string[];
+    explicit?: OperatorScope[];
     scoped?: string[];
     expected?: string[];
   }>([
