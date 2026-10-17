@@ -220,11 +220,17 @@ describe("queued completion handoff", () => {
           expect((await accepted.promise).signal?.aborted).toBe(false);
         }
         executionSettled.resolve();
-        expect(await delivery).toMatchObject(
+        const result = await delivery;
+        expect(result).toMatchObject(
           sourceAllowed
             ? { delivered: true, path: "direct" }
             : { delivered: false, reason: "source_owner_changed" },
         );
+        if (sourceAllowed) {
+          expect(result.phases).toEqual([
+            expect.objectContaining({ phase: "direct-primary", delivered: true, path: "direct" }),
+          ]);
+        }
         expect(executed).toBe(sourceAllowed);
       } finally {
         clearTimeout(expiryTimer);

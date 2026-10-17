@@ -25,6 +25,7 @@ import {
   setActiveEmbeddedRun as setCoreActiveEmbeddedRun,
   type EmbeddedAgentQueueMessageOptions,
 } from "../agents/embedded-agent-runner/runs.js";
+import { queueDetachedEmbeddedAgentMessage } from "../agents/embedded-agent-runner/runs.message-injection.js";
 import { runStructuredInput } from "../agents/harness/structured-input-execution.js";
 import {
   compileStructuredInputForm,
@@ -408,8 +409,8 @@ export function clearActiveEmbeddedRun(
 
 /**
  * @deprecated Active-run queueing is an internal runtime concern. This legacy
- * boolean API only reports whether the session's active turn could take a steer
- * now; it cannot observe the later runtime outcome and never retries a refusal.
+ * boolean API reports whether the active turn or sessionless native sink could
+ * take input now; it cannot observe the later outcome and never retries a refusal.
  */
 export function queueAgentHarnessMessage(
   sessionId: string,
@@ -417,6 +418,9 @@ export function queueAgentHarnessMessage(
   options?: EmbeddedAgentQueueMessageOptions,
 ): boolean {
   const operation = resolveActiveReplyOperationForSessionId(sessionId);
+  if (!operation) {
+    return queueDetachedEmbeddedAgentMessage(sessionId, text, options);
+  }
   const target = captureReplyMessageInjectionTarget(operation);
   if (!target || !canInjectReplyMessageTarget(target, options)) {
     return false;

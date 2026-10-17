@@ -298,6 +298,20 @@ async function deliverAgentHarnessCompletionBound(
 export function isDurableAgentHarnessCompletionDelivery(
   delivery: AgentHarnessCompletionDelivery,
 ): boolean {
-  // The delivery owner now returns one direct or steered handoff, without fallback phases.
-  return delivery.delivered && (delivery.path === "direct" || delivery.path === "steered");
+  if (!delivery.delivered) {
+    return false;
+  }
+  if (delivery.path === "steered") {
+    return true;
+  }
+  if (delivery.path !== "direct") {
+    return false;
+  }
+  const phases = Array.isArray(delivery.phases) ? delivery.phases : undefined;
+  if (!phases) {
+    return true;
+  }
+  return phases.some(
+    (phase) => phase.phase === "direct-primary" && phase.delivered && phase.path === "direct",
+  );
 }

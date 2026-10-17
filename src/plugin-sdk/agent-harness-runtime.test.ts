@@ -259,14 +259,159 @@ describe("agent harness active-run SDK controls", () => {
     }
   });
 
-  it("keeps sessionless native work detached from session steering", () => {
+  it.each(["legacy handle", "V1 sink", "V2 sink"] as const)(
+    "queues sessionless native work through its available %s",
+    async (kind) => {
+      const queueMessage = vi.fn(
+        async (_text: string, _options?: Parameters<typeof queueAgentHarnessMessage>[2]) => {},
+      );
+      const abort = vi.fn();
+      const handle: Parameters<typeof setActiveEmbeddedRun>[1] = {
+        queueMessage,
+        isStreaming: () => true,
+        isCompacting: () => false,
+        abort,
+        ...(kind === "V1 sink"
+          ? { messageInjection: { isAvailable: () => true, queueMessage } }
+          : {}),
+        ...(kind === "V2 sink"
+          ? {
+              messageInjectionV2: {
+                version: 2 as const,
+                isAvailable: () => true,
+                queueMessage: async (text, options, assertCurrent) => {
+                  assertCurrent();
+                  await queueMessage(text, options);
+                },
+              },
+            }
+          : {}),
+      };
+      setActiveEmbeddedRun("sdk-detached", handle);
+      expect(queueAgentHarnessMessage("sdk-detached", "steer")).toBe(true);
+      await vi.waitFor(() => expect(queueMessage).toHaveBeenCalledOnce());
+      expect(queueMessage.mock.calls[0]?.[0]).toBe("steer");
+      expect(abortAgentHarnessRun("sdk-detached")).toBe(true);
+      expect(abort).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["not streaming", "stopped", "V1 unavailable", "V2 unavailable"] as const)(
+    "refuses a sessionless native sink that is %s",
+    (state) => {
+      const queueMessage = vi.fn(async () => {});
+      const handle: Parameters<typeof setActiveEmbeddedRun>[1] = {
+        queueMessage,
+        isStreaming: () => state !== "not streaming",
+        isCompacting: () => false,
+        abort: () => {},
+        ...(state === "stopped" ? { isStopped: () => true } : {}),
+        ...(state === "V1 unavailable"
+          ? { messageInjection: { isAvailable: () => false, queueMessage } }
+          : {}),
+        ...(state === "V2 unavailable"
+          ? { messageInjectionV2: { version: 2 as const, isAvailable: () => false, queueMessage } }
+          : {}),
+      };
+      setActiveEmbeddedRun("sdk-unavailable", handle);
+      expect(queueAgentHarnessMessage("sdk-unavailable", "steer")).toBe(false);
+      expect(queueMessage).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["V1", "V2"] as const)(
+    "checks caller authority before dispatching to a sessionless %s sink",
+    (kind) => {
+      const queueMessage = vi.fn(async () => {});
+      const guardedQueueMessage: NonNullable<
+        Parameters<typeof setActiveEmbeddedRun>[1]["messageInjectionV2"]
+      >["queueMessage"] = (_text, _options, assertCurrent) => {
+        assertCurrent();
+        return queueMessage();
+      };
+      const handle: Parameters<typeof setActiveEmbeddedRun>[1] = {
+        queueMessage,
+        isStreaming: () => true,
+        isCompacting: () => false,
+        abort: () => {},
+        ...(kind === "V1"
+          ? { messageInjection: { isAvailable: () => true, queueMessage } }
+          : {
+              messageInjectionV2: {
+                version: 2 as const,
+                isAvailable: () => true,
+                queueMessage: guardedQueueMessage,
+              },
+            }),
+      };
+      setActiveEmbeddedRun("sdk-revoked-caller", handle);
+      const options = {
+        steeringMode: "all" as const,
+        assertCurrent: () => {
+          throw new Error("caller authority revoked");
+        },
+      };
+      expect(() => queueAgentHarnessMessage("sdk-revoked-caller", "steer", options)).toThrow(
+        kind === "V1"
+          ? "caller authority revoked"
+          : "Message injection authority is no longer current",
+      );
+      expect(queueMessage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not substitute a raw fingerprint for sessionless overlay projection authority", () => {
     const queueMessage = vi.fn(async () => {});
-    const abort = vi.fn();
-    setActiveEmbeddedRun("sdk-detached", createEmbeddedRunHandle({ queueMessage, abort }));
-    expect(queueAgentHarnessMessage("sdk-detached", "steer")).toBe(false);
-    expect(abortAgentHarnessRun("sdk-detached")).toBe(true);
+    setActiveEmbeddedRun("sdk-overlay", {
+      queueMessage,
+      isStreaming: () => true,
+      isCompacting: () => false,
+      abort: () => {},
+      toolAuthorityFingerprint: "current-authority",
+    });
+    const options = {
+      isInboundUserMessage: true,
+      toolAuthorityFingerprint: "current-authority",
+      toolAuthorityOverlay: { senderIsOwner: false, disableTools: false, traceAuthorized: false },
+    };
+    expect(queueAgentHarnessMessage("sdk-overlay", "steer", options)).toBe(false);
     expect(queueMessage).not.toHaveBeenCalled();
-    expect(abort).toHaveBeenCalledOnce();
+  });
+
+  it("revokes sessionless V2 injection when its exact native registration is replaced", () => {
+    let retained: (() => void) | undefined;
+    const handle: Parameters<typeof setActiveEmbeddedRun>[1] = {
+      queueMessage: async () => {},
+      isStreaming: () => true,
+      isCompacting: () => false,
+      abort: () => {},
+      messageInjectionV2: {
+        version: 2,
+        isAvailable: () => true,
+        queueMessage: async (_text, _options, assertCurrent) => {
+          retained = assertCurrent;
+        },
+      },
+    };
+    const firstCleanup = expectDefined(
+      setActiveEmbeddedRun("sdk-replaced", handle),
+      "first native registration",
+    );
+    expect(queueAgentHarnessMessage("sdk-replaced", "first")).toBe(true);
+    const firstAssertion = expectDefined(retained, "first injection authority");
+    expect(firstAssertion).not.toThrow();
+
+    const secondCleanup = expectDefined(
+      setActiveEmbeddedRun("sdk-replaced", handle),
+      "second native registration",
+    );
+    firstCleanup();
+    expect(firstAssertion).toThrow("Message injection authority is no longer current");
+    expect(queueAgentHarnessMessage("sdk-replaced", "second")).toBe(true);
+    const secondAssertion = expectDefined(retained, "second injection authority");
+    expect(secondAssertion).not.toThrow();
+    secondCleanup();
+    expect(secondAssertion).toThrow("Message injection authority is no longer current");
   });
 
   it("keeps retained cleanup bound to its exact registration", () => {

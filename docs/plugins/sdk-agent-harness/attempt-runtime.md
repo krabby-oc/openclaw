@@ -70,12 +70,13 @@ Do not mark ordinary session work detached to bypass admission.
 
 The V1 `messageInjection` and queue options remain supported within an admitted
 attempt.
-`queueAgentHarnessMessage` steers through the session controller: it returns
-`true` only when the session's active turn can take that exact steer now (for
-example, it refuses images for a text-only model), and it never retries a later
-refusal. Once injection is attempted, `onQueueAccepted` reports the outcome,
-including `false` for a refusal. A detached attempt has no turn, so the call returns
-`false` for it. Backends that accept `waitForTranscriptCommit: true` must set
+`queueAgentHarnessMessage` steers session-keyed turns through the session
+controller. Sessionless native work accepts input through its exact native
+registration instead. The helper returns `true` only when that active turn or
+native sink can take the input now (for example, it refuses images for a
+text-only model), and it never retries a later refusal. Once controller injection
+is attempted, `onQueueAccepted` reports the outcome, including `false` for a
+refusal. Backends that accept `waitForTranscriptCommit: true` must set
 `supportsTranscriptCommitWait`; otherwise core refuses that wait.
 Ordinary V1 injection retains its existing behavior within that admitted turn. Source-bound controls
 require V2 and reject visibly before queue or I/O when only V1 is available;

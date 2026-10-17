@@ -320,5 +320,19 @@ async function deliverSubagentAnnouncementBound(
       directIdempotencyKey: params.directIdempotencyKey,
     });
   }
-  return delivery;
+  return {
+    ...delivery,
+    // Preserve the SDK observation of the controller's one selected delivery path.
+    phases: [
+      {
+        phase: delivery.path === "steered" ? "steer-primary" : "direct-primary",
+        delivered: delivery.delivered,
+        path: delivery.path,
+        deliveredAt: delivery.deliveredAt,
+        enqueuedAt: delivery.enqueuedAt,
+        ...(delivery.reason ? { reason: delivery.reason } : {}),
+        error: delivery.error,
+      },
+    ],
+  };
 }

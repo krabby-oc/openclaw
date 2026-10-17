@@ -12,7 +12,9 @@ type SubagentAnnounceDeliveryFailureReason =
   | "message_tool_delivery_missing"
   | "operator_authority_unavailable"
   | "requester_abandoned"
+  | "requester_turn_pending"
   | "source_owner_changed"
+  | "steer_dropped"
   | "visible_reply_missing";
 
 export type SubagentAnnounceDeliveryResult = {
@@ -32,6 +34,19 @@ export type SubagentAnnounceDeliveryResult = {
   terminal?: boolean;
   disposition?: SubagentAnnounceDeliveryDisposition;
   missingMediaUrls?: string[];
+  phases?: SubagentAnnounceDispatchPhaseResult[];
+};
+
+type SubagentAnnounceDispatchPhase = "steer-primary" | "direct-primary" | "steer-fallback";
+
+type SubagentAnnounceDispatchPhaseResult = {
+  phase: SubagentAnnounceDispatchPhase;
+  delivered: boolean;
+  path: SubagentDeliveryPath;
+  deliveredAt?: number;
+  enqueuedAt?: number;
+  reason?: SubagentAnnounceDeliveryFailureReason;
+  error?: string;
 };
 
 export function sourceOwnerChangedResult(): SubagentAnnounceDeliveryResult {
