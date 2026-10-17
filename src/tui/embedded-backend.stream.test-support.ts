@@ -1,9 +1,17 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   INTERNAL_RUNTIME_CONTEXT_BEGIN,
   INTERNAL_RUNTIME_CONTEXT_END,
 } from "../agents/internal-runtime-context.js";
 import type { EmbeddedTuiBackend } from "./embedded-backend.js";
+
+export function captureBackendEvents(backend: EmbeddedTuiBackend) {
+  const events: Array<{ event: string; payload: unknown }> = [];
+  backend.onEvent = ({ event, payload }) => {
+    events.push({ event, payload });
+  };
+  return events;
+}
 
 type EmbeddedAgentResult = {
   payloads: Array<{ text: string }>;
@@ -18,7 +26,6 @@ type StreamTestContext = {
   };
   prepareReply: (reply: Promise<EmbeddedAgentResult>) => void;
   emitAgentEvent: (event: unknown) => void;
-  captureBackendEvents: (backend: EmbeddedTuiBackend) => Array<{ event: string; payload: unknown }>;
   flushMicrotasks: () => Promise<void>;
   embeddedEventTimestamp: number;
 };
@@ -28,10 +35,66 @@ export function registerEmbeddedBackendStreamTests({
   createPendingReply,
   prepareReply,
   emitAgentEvent,
-  captureBackendEvents,
   flushMicrotasks,
   embeddedEventTimestamp,
 }: StreamTestContext) {
+  it("paces display deltas and flushes them before tools, corrections, and completion", async () => {
+    const pending = createPendingReply();
+    prepareReply(pending.promise);
+    const backend = createBackend();
+    const events = captureBackendEvents(backend);
+    const runId = "run-local-paced";
+    backend.start();
+    await backend.sendChat({ sessionKey: "agent:main:main", message: "pace text", runId });
+    const append = (delta: string) =>
+      emitAgentEvent({
+        runId,
+        stream: "assistant",
+        data: { itemId: "raw", text: "Raw provider snapshot", delta },
+        assistantProjection: { itemId: "display", delta, replace: false },
+      });
+    const chat = () => events.filter((event) => event.event === "chat");
+    append("Hello");
+    append(" ");
+    append("world");
+    expect(chat().map((event) => event.payload)).toEqual([
+      expect.objectContaining({ state: "delta", deltaText: "Hello" }),
+    ]);
+    expect(events.filter((event) => event.event === "agent")).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(75);
+    expect(chat().at(-1)?.payload).toMatchObject({ deltaText: " world" });
+
+    append("!");
+    emitAgentEvent({ runId, stream: "tool", data: { phase: "start", name: "exec" } });
+    expect(events.slice(-2)).toMatchObject([
+      { event: "chat", payload: { deltaText: "!" } },
+      { event: "agent", payload: { stream: "tool" } },
+    ]);
+    append(" discarded");
+    emitAgentEvent({
+      runId,
+      stream: "assistant",
+      data: { text: "Raw provider correction", replace: true },
+      assistantProjection: { itemId: "display", text: "Corrected", replace: true },
+    });
+    expect(
+      chat()
+        .slice(-2)
+        .map((event) => event.payload),
+    ).toMatchObject([{ deltaText: " discarded" }, { deltaText: "Corrected", replace: true }]);
+
+    append(" final");
+    pending.resolve({ payloads: [], meta: {} });
+    await flushMicrotasks();
+    expect(chat().at(-1)?.payload).toMatchObject({
+      state: "final",
+      message: { content: [{ text: "Corrected final" }] },
+    });
+    const delivered = events.length;
+    await vi.advanceTimersByTimeAsync(75);
+    expect(events).toHaveLength(delivered);
+  });
+
   it("keeps internal context private when local deltas split its delimiters", async () => {
     const pending = createPendingReply();
     prepareReply(pending.promise);
@@ -234,7 +297,6 @@ export function registerEmbeddedBackendStreamTests({
         data: { itemId: "failed", text: "Failed draft", delta: "Failed draft" },
       });
       for (const data of [
-        { itemId: "failed", text: "NO_REPLY" },
         {
           itemId: "failed",
           text: `${INTERNAL_RUNTIME_CONTEXT_BEGIN}\nprivate runtime detail\n${INTERNAL_RUNTIME_CONTEXT_END}`,

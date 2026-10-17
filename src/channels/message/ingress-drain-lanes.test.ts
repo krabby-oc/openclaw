@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDeferredCore } from "../../shared/deferred.js";
+import type { ChannelIngressDispatchLifecycle } from "./ingress-drain-lifecycle.js";
 import { createChannelIngressDrain } from "./ingress-drain.js";
 import {
   createTestIngressQueue,
@@ -8,6 +9,158 @@ import {
 } from "./ingress-drain.test-helpers.js";
 
 describe("channel ingress drain lanes", () => {
+  it("keeps a competing lane head ahead of its tail while dispatching other lanes", async () => {
+    await withTempState(async (stateDir) => {
+      const queue = createTestIngressQueue(stateDir);
+      await queue.enqueue("head", { text: "same" }, { laneKey: "same", receivedAt: 1 });
+      await queue.enqueue("tail", { text: "same" }, { laneKey: "same", receivedAt: 2 });
+      await queue.enqueue("other", { text: "other" }, { laneKey: "old-lane", receivedAt: 3 });
+      const listUnsettled = queue.listUnsettled!.bind(queue);
+      const competing: { claim: Awaited<ReturnType<typeof queue.claim>> } = { claim: null };
+      const listing = vi.spyOn(queue, "listUnsettled").mockImplementationOnce(async () => {
+        const snapshot = await listUnsettled();
+        competing.claim = await queue.claim("head", { ownerId: "competing-owner" });
+        return snapshot;
+      });
+      const dispatches: string[] = [];
+      const drain = createChannelIngressDrain<Payload>({
+        queue,
+        deriveLaneKey: (record) => record.payload.text,
+        reconcileStoredLaneKey: (_record, stored) => stored === "old-lane",
+        dispatchClaimedEvent: (event) => {
+          dispatches.push(event.id);
+          return { kind: "deferred" };
+        },
+      });
+      try {
+        expect(await drain.drainOnce()).toEqual({ started: 1 });
+        await drain.waitForIdle();
+        const competitor = competing.claim;
+        if (!competitor) {
+          throw new Error("Expected competing claim");
+        }
+        expect(dispatches).toEqual(["other"]);
+        expect(await queue.listClaims()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: "head", claim: competitor.claim }),
+            expect.objectContaining({ id: "other", laneKey: "other" }),
+          ]),
+        );
+        expect((await queue.listPending()).map((row) => row.id)).toEqual(["tail"]);
+        await queue.complete(competitor);
+        expect(await drain.drainOnce()).toEqual({ started: 1 });
+        await drain.waitForIdle();
+        expect(dispatches).toEqual(["other", "tail"]);
+      } finally {
+        drain.dispose();
+        listing.mockRestore();
+      }
+    });
+  });
+
+  it.each<{
+    orderBy: "received" | "id";
+    coherentSnapshot: boolean;
+    expectedIds: string[];
+  }>([
+    {
+      orderBy: "received",
+      coherentSnapshot: true,
+      expectedIds: ["pending", "dispatching", "foreign"],
+    },
+    {
+      orderBy: "id",
+      coherentSnapshot: false,
+      expectedIds: ["dispatching", "foreign", "pending"],
+    },
+  ])(
+    "reads only unhanded same-lane backlog in $orderBy order (coherent snapshot: $coherentSnapshot)",
+    async ({ orderBy, coherentSnapshot, expectedIds }) => {
+      // State-worker admission must keep its immediate I/O turns while drain timers are held.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+      try {
+        await withTempState(async (stateDir) => {
+          const currentNow = 10_000;
+          const queue = createTestIngressQueue(stateDir, { now: () => currentNow });
+          if (!coherentSnapshot) {
+            queue.listUnsettled = undefined;
+          }
+          const finishDispatch = createDeferredCore();
+          const lifecycles = new Map<string, ChannelIngressDispatchLifecycle>();
+          const drain = createChannelIngressDrain<Payload>({
+            queue,
+            now: () => currentNow,
+            orderBy,
+            deferredLaneOccupancy: "release",
+            deriveLaneKey: (row) => row.payload.text,
+            reconcileStoredLaneKey: (_row, storedLaneKey) => storedLaneKey === "old-lane",
+            retryPolicy: { baseMs: 60_000, maxMs: 60_000 },
+            dispatchClaimedEvent: async (event, lifecycle) => {
+              lifecycles.set(event.id, lifecycle);
+              if (event.id === "dispatching") {
+                await finishDispatch.promise;
+                await lifecycle.onAdopted();
+                return { kind: "completed" };
+              }
+              return { kind: "deferred" };
+            },
+          });
+          try {
+            for (const id of ["released", "self"]) {
+              await queue.enqueue(id, { text: "lane" }, { laneKey: "lane", receivedAt: 1 });
+              expect(await drain.drainOnce()).toEqual({ started: 1 });
+              await drain.waitForIdle();
+            }
+            await queue.enqueue(
+              "dispatching",
+              { text: "lane" },
+              { laneKey: "lane", receivedAt: 3 },
+            );
+            expect(await drain.drainOnce()).toEqual({ started: 1 });
+            await queue.enqueue(
+              "pending",
+              { text: "lane" },
+              { laneKey: "old-lane", receivedAt: 2 },
+            );
+            await queue.enqueue("foreign", { text: "lane" }, { laneKey: "lane", receivedAt: 4 });
+            expect(await queue.claim("foreign", { ownerId: "foreign-owner" })).not.toBeNull();
+            await queue.enqueue("other-lane", { text: "lane" }, { laneKey: "other" });
+            await queue.enqueue("retry-delayed", { text: "lane" }, { laneKey: "lane" });
+            const retryClaim = await queue.claim("retry-delayed");
+            if (!retryClaim) {
+              throw new Error("Expected retry fixture claim");
+            }
+            await queue.release(retryClaim, { lastError: "retry", releasedAt: currentNow });
+
+            const readBacklog = lifecycles.get("self")?.readLaneBacklog;
+            if (!readBacklog) {
+              throw new Error("Expected drain lifecycle lane backlog reader");
+            }
+            const pendingBefore = await queue.listPending();
+            const claimsBefore = await queue.listClaims();
+            expect((await readBacklog()).map((row) => row.id)).toEqual(expectedIds);
+            const readDispatchingBacklog = lifecycles.get("dispatching")?.readLaneBacklog;
+            if (!readDispatchingBacklog) {
+              throw new Error("Expected dispatching lifecycle lane backlog reader");
+            }
+            expect((await readDispatchingBacklog()).map((row) => row.id)).toEqual(
+              expectedIds.filter((id) => id !== "dispatching"),
+            );
+            expect(await queue.listPending()).toEqual(pendingBefore);
+            expect(await queue.listClaims()).toEqual(claimsBefore);
+            expect(drain.activeLaneKeys()).toEqual(new Set(["lane"]));
+          } finally {
+            finishDispatch.resolve();
+            await drain.waitForIdle();
+            drain.dispose();
+          }
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("preserves rejected stored lanes and attempts each snapshot candidate once", async () => {
     await withTempState(async (stateDir) => {
       const queue = createTestIngressQueue(stateDir);

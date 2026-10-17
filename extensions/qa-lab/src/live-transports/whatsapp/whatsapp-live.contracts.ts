@@ -3,6 +3,7 @@ import type {
   WhatsAppQaDriverSession,
 } from "@openclaw/whatsapp/api.js";
 import type { ChannelApprovalKind } from "openclaw/plugin-sdk/approval-handler-runtime";
+import type { ReplyToMode } from "openclaw/plugin-sdk/config-contracts";
 import type { QaGatewayChild } from "../../gateway-child.js";
 
 export type WhatsAppQaRuntimeEnv = {
@@ -124,7 +125,6 @@ export type WhatsAppQaMessageScenarioRun = {
   expectReply: boolean;
   expectedJoinedSutTextIncludes?: string[];
   expectedSutMessageCount?: number;
-  expectedSutMessageCountRange?: readonly [number, number];
   input: string;
   kind?: "message";
   matchText: string | RegExp;
@@ -167,7 +167,7 @@ export type WhatsAppQaConfigOverrides = {
   groupHistoryLimit?: number;
   groupPolicy?: "allowlist" | "disabled" | "open";
   inboundDebounceMs?: number;
-  replyToMode?: "all" | "batched" | "first" | "off";
+  replyToMode?: ReplyToMode;
   statusReactions?: boolean;
 };
 

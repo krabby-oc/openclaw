@@ -7,7 +7,6 @@ import {
 import { ALLOW_OLDER_BINARY_DESTRUCTIVE_ACTIONS_ENV } from "../../config/future-version-guard.js";
 import { GATEWAY_CONFIG_SELECTION_ENV_KEYS } from "../../config/gateway-env-selection.js";
 import { CONFIG_AUDIT_STORE_LABEL } from "../../config/io.audit.js";
-import type { ConfigReplaceResult } from "../../config/mutate.js";
 import { describeConfigSnapshotInputChange } from "../../config/snapshot-inputs.js";
 import type { ConfigFileSnapshot } from "../../config/types.js";
 import {
@@ -45,7 +44,6 @@ let lastGuardedGatewayRunSnapshot: ConfigFileSnapshot | undefined;
 let preparedGatewayRunBootstrap:
   | (Pick<GatewayRunOpts, "allowUnconfigured" | "dev"> & {
       snapshot: ConfigFileSnapshot;
-      currentSnapshot?: ConfigFileSnapshot;
     })
   | undefined;
 let preparedGatewayRunReset: PreparedGatewayRunReset | undefined;
@@ -195,14 +193,13 @@ function restoreAppliedGatewayRunConfigEnvironment(preserveSelection = true): vo
 async function readGuardedGatewayRunConfig(
   params: GatewayRunGuardParams,
 ): Promise<ConfigFileSnapshot | null> {
-  const { readConfigFileSnapshot } = await import("../../config/config.js");
   const { createConfigIO } = await import("../../config/io.factory.js");
   return await withArtifactPreservingStateReads(async () => {
-    const current = await readConfigFileSnapshot({
-      isolateEnv: true,
+    const current = await createConfigIO({
+      env: cloneEnvWithPlatformSemantics(process.env),
       observe: false,
       pluginValidation: "core-only",
-    });
+    }).readConfigFileSnapshot();
     const guard = (snapshot: ConfigFileSnapshot) =>
       enforceGatewayRunFutureConfigGuard({ ...params, snapshot });
     if (!guard(current)) {
@@ -637,7 +634,6 @@ export async function prepareGatewayRunBootstrap(params: GatewayRunGuardParams):
 export async function recheckGatewayRunBootstrap(
   params: GatewayRunGuardParams & {
     snapshot?: ConfigFileSnapshot;
-    committedWrite?: ConfigReplaceResult;
   },
 ): Promise<boolean> {
   // This callback can run while startup preflight owns the shared preparation lease.
@@ -667,31 +663,11 @@ export async function recheckGatewayRunBootstrap(
   if (!current) {
     return false;
   }
-  const expected = prepared.currentSnapshot ?? prepared.snapshot;
-  const committed = params.committedWrite;
   // Selection already admitted any current-config backup. Later authored drift
   // must be validated by a new startup attempt.
-  let change = describeGatewayRunConfigChange(expected, committed?.snapshot ?? current, {
+  const change = describeGatewayRunConfigChange(prepared.snapshot, current, {
     allowPathChange: params.snapshot !== undefined,
   });
-  if (!change && committed) {
-    change = committed.persistedHash
-      ? describeGatewayRunConfigChange(
-          {
-            ...current,
-            path: committed.path,
-            hash: committed.persistedHash,
-            sourceConfig: committed.nextConfig,
-            valid: true,
-          },
-          current,
-        )
-      : "committed config revision is unavailable";
-    if (!change) {
-      // Keep the original selection baseline for the final environment guard.
-      prepared.currentSnapshot = current;
-    }
-  }
   if (!change) {
     return true;
   }

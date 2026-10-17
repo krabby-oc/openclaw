@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../../test/helpers/promise.js";
+import { awaitGateBeforeSettlement, createDeferred } from "../../../test/helpers/promise.js";
+import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../config/config.js";
 import type { AgentTurnIo } from "../../gateway/agent-turn/types.js";
 import {
   registerChatAbortController,
@@ -25,6 +26,7 @@ import { dispatchRestartRecoveryUntilStarted } from "./main-session-restart-disp
 const sessionKey = "agent:main:recovery-capacity";
 const sessionId = "recovery-session";
 const runId = "recovery-run";
+const identity = { agentId: "main", sessionKey, sessionId, runId } as const;
 const sessionLane = `session:${sessionKey}`;
 const globalLane = "recovery-capacity-global";
 const startTurn = vi.hoisted(() => vi.fn<(params: { io: AgentTurnIo }) => Promise<void>>());
@@ -48,6 +50,7 @@ vi.mock("../../gateway/agent-turn/agent-turn-service.js", () => ({
 }));
 
 beforeEach(() => {
+  setRuntimeConfigSnapshot({});
   resetAgentEventsForTest();
   resetCommandQueueStateForTest();
   startTurn.mockReset();
@@ -55,6 +58,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearRuntimeConfigSnapshot();
   resetAgentEventsForTest();
   resetCommandQueueStateForTest();
   vi.useRealTimers();
@@ -77,14 +81,12 @@ describe("restart recovery startup ownership", () => {
     const preparation = createDeferred();
     const registered = createDeferred();
     const finish = createDeferred();
+    const executionEntered = createDeferred();
     const lifecycleGeneration = getAgentEventLifecycleGeneration();
     const timeoutMs = 60_000;
     const registration = registerChatAbortController({
       chatAbortControllers: context.chatAbortControllers,
-      runId,
-      agentId: "main",
-      sessionId,
-      sessionKey,
+      ...identity,
       lifecycleGeneration,
       kind: "agent",
       timeoutMs,
@@ -93,10 +95,7 @@ describe("restart recovery startup ownership", () => {
     registerAgentRunContext(runId, { sessionKey, sessionId, lifecycleGeneration });
     let params: RunEmbeddedAgentParams & { sessionFile: string } = {
       admittedRunContext: createTestAdmittedRunContext(runId),
-      agentId: "main",
-      runId,
-      sessionId,
-      sessionKey,
+      ...identity,
       sessionFile: sessionKey,
       lifecycleGeneration,
       abortSignal: registration.controller.signal,
@@ -150,6 +149,7 @@ describe("restart recovery startup ownership", () => {
         await lanes.enqueueSession(() =>
           lanes.enqueueGlobal(async () => {
             registration.markExecutionStarted();
+            executionEntered.resolve();
             if (stage !== "cached queue") {
               io.emitExecutionStarted?.();
             }
@@ -195,6 +195,14 @@ describe("restart recovery startup ownership", () => {
         setCommandLaneConcurrency(blockedLane, 1);
       }
       if (stage === "cached queue") {
+        if (!execution) {
+          throw new Error("expected recovery execution to be registered");
+        }
+        await awaitGateBeforeSettlement(
+          executionEntered.promise,
+          execution,
+          "recovery execution settled before entering its task",
+        );
         await vi.advanceTimersByTimeAsync(10_000);
       }
       expect(onSettled).not.toHaveBeenCalled();

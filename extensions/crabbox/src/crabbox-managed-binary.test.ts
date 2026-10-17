@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { inspect } from "node:util";
 import JSZip from "jszip";
 import { toErrorObject } from "openclaw/plugin-sdk/error-runtime";
 import { buildTimeoutAbortSignal, createDeferred } from "openclaw/plugin-sdk/extension-shared";
@@ -12,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureManagedCrabboxBinary } from "../cli-runtime-api.js";
 import {
   CRABBOX_MIN_VERSION,
+  isCrabboxVersionAtLeast,
   probeCrabboxVersion,
   resolveManagedCrabboxBinaryPath,
 } from "./crabbox-managed-binary.js";
@@ -42,7 +44,12 @@ async function fixture(version = "0.66.0") {
   const arch = process.arch === "x64" ? "amd64" : process.arch;
   const extension = platform === "windows" ? "zip" : "tar.gz";
   const asset = `crabbox_${CRABBOX_MIN_VERSION}_${platform}_${arch}.${extension}`;
-  const files = { [path.basename(binary)]: CRABBOX_MIN_VERSION, "companion-helper": "keep me" };
+  const files = {
+    [path.basename(binary)]: CRABBOX_MIN_VERSION,
+    "companion-helper": "keep me",
+    "crabbox-runtime/manifest.json": '{"runtime":"fixture"}',
+    "crabbox-runtime/linux-amd64": "runtime-pack-fixture",
+  };
   let archive: Buffer;
   if (platform === "windows") {
     const zip = new JSZip();
@@ -54,6 +61,7 @@ async function fixture(version = "0.66.0") {
     const source = path.join(root, "source");
     await fs.mkdir(source);
     for (const [name, content] of Object.entries(files)) {
+      await fs.mkdir(path.dirname(path.join(source, name)), { recursive: true });
       await fs.writeFile(path.join(source, name), content, { mode: 0o755 });
     }
     const archivePath = path.join(root, asset);
@@ -104,24 +112,6 @@ describe("managed Crabbox", () => {
     );
   });
 
-  it("upgrades an older managed cache without changing its files", async () => {
-    const test = await fixture();
-    const prior = path.join(
-      test.env.OPENCLAW_STATE_DIR,
-      "tools/crabbox/0.56.0",
-      path.basename(path.dirname(test.binary)),
-      path.basename(test.binary),
-    );
-    await fs.mkdir(path.dirname(prior), { recursive: true });
-    await fs.writeFile(prior, "0.56.0");
-    await expect(ensureManagedCrabboxBinary(test.options)).resolves.toEqual(test.installed);
-    expect(test.fetch).toHaveBeenCalledTimes(2);
-    expect(await fs.readFile(prior, "utf8")).toBe("0.56.0");
-    test.fetch.mockRejectedValue(new Error("offline"));
-    await expect(ensureManagedCrabboxBinary(test.options)).resolves.toEqual(test.installed);
-    expect(test.fetch).toHaveBeenCalledTimes(2);
-  });
-
   it("keeps a supported configured binary through startup contention", async () => {
     const test = await fixture("999.0.0");
     const started = createDeferred<void>();
@@ -169,25 +159,41 @@ describe("managed Crabbox", () => {
   });
 
   it("upgrades an old candidate, preserves its distribution, and reuses it offline", async () => {
-    const test = await fixture("0.68.0");
+    const test = await fixture("0.72.0");
     const params = test.options;
     await expect(ensureManagedCrabboxBinary(params)).resolves.toEqual(test.installed);
-    expect(await fs.readFile(test.candidate, "utf8")).toBe("0.68.0");
+    expect(await fs.readFile(test.candidate, "utf8")).toBe("0.72.0");
     expect(
       await fs.readFile(path.join(path.dirname(test.binary), "companion-helper"), "utf8"),
     ).toBe("keep me");
+    expect(
+      await fs.readFile(
+        path.join(path.dirname(test.binary), "crabbox-runtime/manifest.json"),
+        "utf8",
+      ),
+    ).toBe('{"runtime":"fixture"}');
+    expect(
+      await fs.readFile(
+        path.join(path.dirname(test.binary), "crabbox-runtime/linux-amd64"),
+        "utf8",
+      ),
+    ).toBe("runtime-pack-fixture");
     if (process.platform !== "win32") {
-      for (const name of [path.basename(test.binary), "companion-helper"]) {
+      for (const name of [
+        path.basename(test.binary),
+        "companion-helper",
+        "crabbox-runtime/linux-amd64",
+      ]) {
         expect((await fs.stat(path.join(path.dirname(test.binary), name))).mode & 0o111).toBe(
           0o111,
         );
       }
     }
-    await fs.writeFile(test.binary, "0.70.0");
+    await fs.writeFile(test.binary, "0.78.0");
     test.fetch.mockRejectedValue(new Error("offline"));
     await expect(ensureManagedCrabboxBinary(params)).resolves.toEqual({
       binary: test.binary,
-      version: "0.70.0",
+      version: "0.78.0",
     });
     expect(test.fetch).toHaveBeenCalledTimes(2);
     expect(await fs.readdir(path.dirname(path.dirname(test.binary)))).toEqual([
@@ -574,8 +580,52 @@ describe("managed Crabbox", () => {
 
 describe("Crabbox version admission", () => {
   it.each([
-    ["0.69.0-rc.1", "outdated"],
-    ["0.69.0+build.1", "supported"],
+    ["0.78.0", true],
+    ["0.78.0+build", true],
+    ["0.78.1", true],
+    ["1.0.0", true],
+    ["0.77.9", false],
+    ["0.78.0-rc.1", false],
+    ["unparseable", false],
+  ])("compares %s against a release floor (%s)", (version, expected) => {
+    expect(isCrabboxVersionAtLeast(version, "0.78.0")).toBe(expected);
+  });
+
+  it("reports a redacted version failure without retaining private error data", async () => {
+    const token = "synthetic-version-secret-0123456789";
+    const cause = Object.assign(
+      new Error(`output capture failed token=${token}`, {
+        cause: new Error(`nested token=${token}`),
+      }),
+      { stdout: token, stderr: token },
+    );
+    const probe = await probeCrabboxVersion("crabbox", async () => {
+      throw cause;
+    });
+    expect(probe).toMatchObject({
+      status: "indeterminate",
+      reason: expect.stringContaining(
+        "Crabbox version command execution failed: output capture failed",
+      ),
+    });
+    for (
+      let current: unknown = Object.getOwnPropertyDescriptor(probe, "cause")?.value;
+      current instanceof Error;
+      current = current.cause
+    ) {
+      expect(current.message).not.toContain(token);
+    }
+    expect(inspect(probe, { depth: null })).not.toContain(token);
+    expect(probe).not.toHaveProperty("cause");
+    expect(probe).toHaveProperty("reason", expect.not.stringContaining("synthetic-version-secret"));
+  });
+
+  it.each([
+    ["0.72.0", "outdated"],
+    ["0.77.0", "supported"],
+    ["0.77.0-rc.1", "outdated"],
+    ["0.77.0+build.1", "supported"],
+    ["0.78.0", "supported"],
     ["0.9007199254740993.0", "indeterminate"],
   ])("classifies %s as %s", async (version, status) => {
     const test = await fixture(version);

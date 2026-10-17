@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import OpenClawNativeState
 import Synchronization
 #if canImport(Security)
 import Security
@@ -22,14 +23,7 @@ public enum GatewayDeviceIdentityProfile: String, Sendable {
     }
 
     var authFileName: String {
-        switch self {
-        case .primary:
-            "device-auth.json"
-        case .node:
-            "node-device-auth.json"
-        case .shareExtension:
-            "share-device-auth.json"
-        }
+        self.identityFileName.replacingOccurrences(of: ".json", with: "-auth.json")
     }
 }
 
@@ -222,10 +216,6 @@ public enum DeviceIdentityStore {
             userInfo: [NSLocalizedDescriptionKey: message])
     }
 
-    public static func loadOrCreate() -> DeviceIdentity {
-        self.loadOrCreate(profile: .primary)
-    }
-
     @discardableResult
     public static func configureStateDirectory(_ url: URL) -> Bool {
         DeviceIdentityPaths.configureStateDirURL(url)
@@ -253,7 +243,7 @@ public enum DeviceIdentityStore {
     }
     #endif
 
-    public static func loadOrCreate(profile: GatewayDeviceIdentityProfile) -> DeviceIdentity {
+    public static func loadOrCreate(profile: GatewayDeviceIdentityProfile = .primary) -> DeviceIdentity {
         do {
             return try self.loadOrCreatePersistedOrThrow(profile: profile)
         } catch {
@@ -279,6 +269,10 @@ public enum DeviceIdentityStore {
                 destinationStateDirURL: stateDirURL,
                 profile: profile,
                 legacySources: DeviceIdentityPaths.legacyIdentitySources(profile: profile))
+        } catch let error as OpenClawNativeStateError {
+            throw OpenClawNativeStateError(
+                "Could not access the persisted device identity: \(error.localizedDescription)",
+                code: error.code)
         } catch {
             throw NSError(
                 domain: "ai.openclaw.device-identity-store",

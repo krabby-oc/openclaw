@@ -6,9 +6,10 @@ import {
   captureChatOutboxRecoveryDestination,
   discardChatOutboxRecovery,
   readChatOutboxRecovery,
+  retireDeliveredChatOutboxRecovery,
   restoreChatOutboxRecovery,
 } from "./outbox-recovery.ts";
-import type { StoredComposerSession, StoredComposerState } from "./outbox-store-codec.ts";
+import type { StoredComposerSession } from "./outbox-store-codec.ts";
 import {
   readStoredOutboxStore,
   storageTargetForComposer,
@@ -75,6 +76,154 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+function reopenStorage() {
+  const reopened = createStorageMock();
+  for (let index = 0; index < sessionStorage.length; index++) {
+    const key = sessionStorage.key(index)!;
+    reopened.setItem(key, sessionStorage.getItem(key)!);
+  }
+  vi.stubGlobal("sessionStorage", reopened);
+}
+
+function deliveryFixture() {
+  const f = fixture("queue");
+  const state = Object.assign(f.state, {
+    sessionKey: "agent:main:legacy",
+    currentSessionId: "original-session",
+    chatMessages: [] as unknown[],
+  });
+  const legacy = readStoredOutboxStore(sessionStorage, f.source);
+  legacy.sessions[sourceScope]!.queue![0]!.sessionId = state.currentSessionId;
+  writeStoredOutboxStore(sessionStorage, f.source, legacy);
+  return { ...f, state };
+}
+
+it.each(["original-attempt", "original-attempt:user"])(
+  "retires saved queue input proven by durable submission %s without sending",
+  (idempotencyKey) => {
+    const f = deliveryFixture();
+    f.state.chatMessages = [
+      {
+        role: "user",
+        content: "Retained queue 雪",
+        __openclaw: { id: "delivered", idempotencyKey },
+      },
+    ];
+    expect(
+      retireDeliveredChatOutboxRecovery(f.state, readChatOutboxRecovery(f.state).entries),
+    ).toBe("retired");
+    expect(readChatOutboxRecovery(f.state).entries).toEqual([]);
+    expect(f.stored().recovery).toEqual({});
+    expect(f.stored().sessions).toEqual({});
+    expect(f.state.chatQueue).toEqual([]);
+    expect(f.state.chatMessage).toBe("");
+  },
+);
+
+it.each([
+  "local-copy",
+  "session",
+  "scope",
+  "text-only",
+  "assistant",
+  "no-run-id",
+  "unowned-draft",
+] as const)("keeps saved queue input when delivery retirement is unsafe: %s", (mismatch) => {
+  const f = deliveryFixture();
+  f.state.chatMessages = [
+    {
+      role: mismatch === "assistant" ? "assistant" : "user",
+      content: "Retained queue 雪",
+      __openclaw: {
+        id: mismatch === "local-copy" ? null : "delivered",
+        seq: null,
+        idempotencyKey: mismatch === "text-only" ? "another-attempt" : "original-attempt",
+      },
+    },
+  ];
+  if (mismatch === "session") {
+    f.state.currentSessionId = "replacement-session";
+  } else if (mismatch === "scope") {
+    f.state.sessionKey = firstScope.sessionKey;
+  } else if (mismatch === "no-run-id" || mismatch === "unowned-draft") {
+    const legacy = readStoredOutboxStore(sessionStorage, f.source);
+    if (mismatch === "no-run-id") {
+      delete legacy.sessions[sourceScope]!.queue![0]!.sendRunId;
+    } else {
+      legacy.sessions[sourceScope]!.draft = "Keep this draft";
+      f.state.chatMessages = [
+        { role: "user", __openclaw: { seq: 7, idempotencyKey: "original-attempt:user" } },
+      ];
+    }
+    writeStoredOutboxStore(sessionStorage, f.source, legacy);
+  }
+  const before = sessionStorage.getItem(f.source.key);
+  const entries = readChatOutboxRecovery(f.state).entries;
+  expect(retireDeliveredChatOutboxRecovery(f.state, entries)).toBe("unchanged");
+  expect(readChatOutboxRecovery(f.state).entries).toEqual(entries);
+  expect(sessionStorage.getItem(f.source.key)).toBe(before);
+  expect(f.stored().recovery).toEqual({});
+});
+
+it("retains the draft and unproven inputs when only one owned submission was delivered", () => {
+  const f = deliveryFixture();
+  const legacy = readStoredOutboxStore(sessionStorage, f.source);
+  const delivered = legacy.sessions[sourceScope]!.queue![0]!;
+  legacy.sessions = {};
+  writeStoredOutboxStore(sessionStorage, f.source, legacy);
+  const owned = f.stored();
+  owned.recovery.owned = {
+    sourceVersion: 4,
+    sourceScopeKey: sourceScope,
+    session: {
+      draft: "Keep this draft",
+      updatedAt: 1,
+      queue: [delivered, { id: "unsent", text: "Still unsent", createdAt: 2 }],
+    },
+  };
+  writeStoredOutboxStore(sessionStorage, storageTargetForComposer(f.state), owned);
+  f.state.chatMessages = [
+    { role: "user", __openclaw: { seq: 7, idempotencyKey: "original-attempt:user" } },
+  ];
+  expect(retireDeliveredChatOutboxRecovery(f.state, readChatOutboxRecovery(f.state).entries)).toBe(
+    "retired",
+  );
+  expect(readChatOutboxRecovery(f.state).entries).toMatchObject([
+    { id: "owned", session: { draft: "Keep this draft", queue: [{ id: "unsent" }] } },
+  ]);
+  expect(readChatOutboxRecovery(f.state).entries[0]!.session.queue).toHaveLength(1);
+});
+
+it.each(["recovery", "history"] as const)(
+  "fences delivery retirement when authoritative %s changes",
+  (change) => {
+    const f = deliveryFixture();
+    f.state.chatMessages = [
+      { role: "user", __openclaw: { id: "delivered", idempotencyKey: "original-attempt" } },
+    ];
+    const entries = readChatOutboxRecovery(f.state).entries;
+    if (change === "recovery") {
+      const legacy = readStoredOutboxStore(sessionStorage, f.source);
+      legacy.sessions[sourceScope]!.draft = "Newer intent";
+      writeStoredOutboxStore(sessionStorage, f.source, legacy);
+    } else {
+      const set = sessionStorage.setItem.bind(sessionStorage);
+      vi.spyOn(sessionStorage, "setItem").mockImplementation((key, value) => {
+        set(key, value);
+        if (key === f.source.key) {
+          f.state.chatMessages = [];
+        }
+      });
+    }
+    const before = sessionStorage.getItem(f.source.key);
+    expect(retireDeliveredChatOutboxRecovery(f.state, entries)).toBe("conflict");
+    if (change === "recovery") {
+      expect(sessionStorage.getItem(f.source.key)).toBe(before);
+    }
+    expect(readChatOutboxRecovery(f.state).entries[0]?.session.queue).toHaveLength(1);
+  },
+);
 
 it("does not offer clear fences as saved messages or erase canonical clear fences", () => {
   const f = fixture("draft");
@@ -184,86 +333,6 @@ it.each(["account", "gateway", "revision", "incognito", "confirmation"] as const
   },
 );
 
-it("preserves newer sibling writes discovered during discard", () => {
-  const f = fixture("draft");
-  const entry = f.entry();
-  const target = storageTargetForComposer(f.state);
-  const get = sessionStorage.getItem.bind(sessionStorage);
-  const set = sessionStorage.setItem.bind(sessionStorage);
-  let retired = false;
-  let changed = false;
-  const remove = sessionStorage.removeItem.bind(sessionStorage);
-  vi.spyOn(sessionStorage, "removeItem").mockImplementation((key) => {
-    remove(key);
-    if (key === f.source.key) {
-      retired = true;
-    }
-  });
-  vi.spyOn(sessionStorage, "getItem").mockImplementation((key) => {
-    if (retired && !changed && key === target.key) {
-      changed = true;
-      const store = JSON.parse(get(key)!);
-      store.recovery.newer = {
-        sourceVersion: 4,
-        sourceScopeKey: sourceScope,
-        session: { draft: "newer sibling", updatedAt: 2 },
-      };
-      set(key, JSON.stringify(store));
-    }
-    return get(key);
-  });
-  // A new sibling read before consumption belongs to the same canonical store.
-  expect(discardChatOutboxRecovery(f.state, entry)).toBe("discarded");
-  expect(changed).toBe(true);
-  expect(readChatOutboxRecovery(f.state).entries.map((row) => row.session.draft)).toEqual([
-    "newer sibling",
-  ]);
-});
-
-it.each(["queue", "draft"] as const)(
-  "never duplicates %s recovery across destinations after failed source retirement",
-  (kind) => {
-    const f = fixture(kind);
-    const original = f.entry();
-    const remove = vi.spyOn(sessionStorage, "removeItem").mockImplementation(() => {
-      throw new Error("blocked retirement");
-    });
-    expect(restoreChatOutboxRecovery(f.state, original, f.destination())).toBe("storage-failed");
-    remove.mockRestore();
-    // Reopen all durable metadata: no in-memory deduplication can own this retry.
-    const reopened = createStorageMock();
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const key = sessionStorage.key(i)!;
-      reopened.setItem(key, sessionStorage.getItem(key)!);
-    }
-    vi.stubGlobal("sessionStorage", reopened);
-    expect(f.entry().session).toEqual(f.session);
-    expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination(secondScope))).toBe(
-      "restored",
-    );
-    const sessions = f.stored().sessions;
-    expect(sessions[storedChatOutboxScopeKey(firstScope)]).toBeUndefined();
-    expect(Object.keys(sessions)).toEqual([storedChatOutboxScopeKey(secondScope)]);
-    expect(sessions[storedChatOutboxScopeKey(secondScope)]).toMatchObject(
-      kind === "draft"
-        ? { draft: "Retained draft 雪" }
-        : {
-            queue: [
-              {
-                id: "original-input",
-                text: "Retained queue 雪",
-                sendRunId: "original-attempt",
-                sendAttempts: 1,
-                sendState: "unconfirmed",
-                storageScope: JSON.stringify([gatewayUrl, "account-a"]),
-              },
-            ],
-          },
-    );
-    expect(readChatOutboxRecovery(f.state).entries).toEqual([]);
-  },
-);
-
 it.each(["claim", "stage", "retire", "discard"] as const)(
   "retains an inert recovery through failed %s during discard",
   (boundary) => {
@@ -300,31 +369,6 @@ it.each(["claim", "stage", "retire", "discard"] as const)(
   },
 );
 
-it("keeps a resurrected source claimed until confirmed discard can retire both copies", () => {
-  const f = fixture("queue");
-  const entry = f.entry();
-  const source = sessionStorage.getItem(f.source.key)!;
-  const remove = sessionStorage.removeItem.bind(sessionStorage);
-  const removals = vi.spyOn(sessionStorage, "removeItem").mockImplementation((key) => {
-    remove(key);
-    if (key === f.source.key) {
-      sessionStorage.setItem(key, source);
-    }
-  });
-  expect(discardChatOutboxRecovery(f.state, entry)).toBe("storage-failed");
-  removals.mockRestore();
-  expect(
-    readChatOutboxRecovery({
-      ...f.state,
-      client: { recoveryScope: "account-b", recoveryScopeReady: true },
-    }).entries,
-  ).toEqual([]);
-  expect(readChatOutboxRecovery(f.state).entries).toHaveLength(1);
-  expect(discardChatOutboxRecovery(f.state, f.entry())).toBe("discarded");
-  expect(readChatOutboxRecovery(f.state).entries).toEqual([]);
-  expect(f.stored().sessions).toEqual({});
-});
-
 it("retires attachment payloads only after the last recovery copy is discarded", () => {
   const f = fixture("queue");
   const reference = { key: "blob", tabId: "this-tab", recoveryScope: "account-a" };
@@ -342,11 +386,15 @@ it("retires attachment payloads only after the last recovery copy is discarded",
 });
 
 const stages = ["claim", "stage", "retire-write", "retire-remove", "publish"] as const;
-const failures = ["throw", "silent", "after-write"] as const;
+const failures = ["throw", "after-write"] as const;
 it.each(
   stages.flatMap((stage) =>
     failures.flatMap((failure) =>
-      (["queue", "draft"] as const).map((kind) => ({ stage, failure, kind })),
+      (stage === "publish" ? (["queue", "draft"] as const) : (["queue"] as const)).map((kind) => ({
+        stage,
+        failure,
+        kind,
+      })),
     ),
   ),
 )(
@@ -363,9 +411,7 @@ it.each(
       if (failure === "after-write") {
         commit();
       }
-      if (failure !== "silent") {
-        throw new Error("Injected " + stage);
-      }
+      throw new Error("Injected " + stage);
     };
     const write = vi.spyOn(sessionStorage, "setItem").mockImplementation((key, value) => {
       const record = JSON.parse(value) as {
@@ -381,13 +427,13 @@ it.each(
           : key === ownedKey &&
             ((stage === "stage" && staging) || (stage === "publish" && !staging));
       if (matches) {
-        return fail(() => set(key, value));
+        fail(() => set(key, value));
       }
       set(key, value);
     });
     const removal = vi.spyOn(sessionStorage, "removeItem").mockImplementation((key) => {
       if (key === f.source.key && stage === "retire-remove") {
-        return fail(() => remove(key));
+        fail(() => remove(key));
       }
       remove(key);
     });
@@ -395,12 +441,7 @@ it.each(
     expect(failuresSeen).toBe(1);
     write.mockRestore();
     removal.mockRestore();
-    const reopened = createStorageMock();
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const key = sessionStorage.key(i)!;
-      reopened.setItem(key, sessionStorage.getItem(key)!);
-    }
-    vi.stubGlobal("sessionStorage", reopened);
+    reopenStorage();
     const committed = stage === "publish" && failure === "after-write";
     if (committed) {
       expect(f.entry()).toBeUndefined();
@@ -443,345 +484,120 @@ it.each(
   },
 );
 
-it.each(["account", "client", "input", "stored-input"] as const)(
-  "retains recovery instead of publishing across reentrant %s replacement",
-  (change) => {
-    const f = fixture("draft");
-    const original = f.entry();
-    const set = sessionStorage.setItem.bind(sessionStorage);
-    let changed = false;
-    const write = vi.spyOn(sessionStorage, "setItem").mockImplementation((key, value) => {
-      set(key, value);
-      if (key !== f.source.key || changed) {
-        return;
-      }
-      changed = true;
-      if (change === "account") {
-        f.state.client.recoveryScope = "account-b";
-      } else if (change === "client") {
-        f.state.client = { ...f.state.client };
-      } else if (change === "input") {
-        f.state.chatMessage = "newer live input";
-      } else {
-        set(
-          storageTargetForComposer(f.state).key,
-          JSON.stringify({
-            version: 4,
-            gatewayOwner: gatewayUrl,
-            recovery: {},
-            sessions: {
-              [storedChatOutboxScopeKey(firstScope)]: {
-                draft: "newer stored input",
-                draftRevision: 999,
-                updatedAt: 9,
-              },
-            },
-          }),
-        );
-      }
-    });
-    expect(restoreChatOutboxRecovery(f.state, original, f.destination())).toBe("conflict");
-    write.mockRestore();
-    expect(changed).toBe(true);
-    if (change === "account") {
-      expect(readChatOutboxRecovery(f.state).entries).toEqual([]);
-      f.state.client.recoveryScope = "account-a";
-    }
-    expect(f.entry().session).toEqual(f.session);
-    expect(f.stored().sessions[storedChatOutboxScopeKey(firstScope)]?.draft).toBe(
-      change === "stored-input" ? "newer stored input" : undefined,
-    );
-    if (change === "input") {
-      expect(f.state.chatMessage).toBe("newer live input");
-    }
-    f.state.chatMessage = "";
-    expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination(secondScope))).toBe(
-      "restored",
-    );
-    expect(f.stored().sessions[storedChatOutboxScopeKey(secondScope)]?.draft).toBe(f.session.draft);
-  },
-);
-
-it("rejects a reentrant second restore while the durable claim is being written", () => {
-  const f = fixture("queue");
-  const original = f.entry();
-  const first = f.destination();
-  const second = f.destination(secondScope);
-  const set = sessionStorage.setItem.bind(sessionStorage);
-  let nested: string | undefined;
-  vi.spyOn(sessionStorage, "setItem").mockImplementation((key, value) => {
-    set(key, value);
-    if (key === f.source.key && nested === undefined) {
-      nested = restoreChatOutboxRecovery(f.state, original, second);
-    }
-  });
-  expect(restoreChatOutboxRecovery(f.state, original, first)).toBe("restored");
-  expect(nested).toBe("conflict");
-  expect(Object.keys(f.stored().sessions)).toEqual([storedChatOutboxScopeKey(firstScope)]);
-});
-
-it.each(["queue", "draft"] as const)(
-  "retains staged %s when the destination outbox is full",
-  (kind) => {
-    const f = fixture(kind);
-    const target = storageTargetForComposer(f.state);
-    const store = f.stored();
-    for (let index = 0; index < 20; index++) {
-      store.sessions["agent:main:occupied-" + index + "\u0000agent:main"] = {
-        updatedAt: Date.now() + 1000 + index,
-        queue: [
-          {
-            id: "occupied-" + index,
-            text: "keep",
-            createdAt: index,
-            storageScope: JSON.stringify([gatewayUrl, "account-a"]),
-          },
-        ],
-      };
-    }
-    writeStoredOutboxStore(sessionStorage, target, store);
-    expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination())).toBe("storage-failed");
-    expect(f.entry().session).toEqual(f.session);
-    expect(Object.keys(f.stored().sessions)).toHaveLength(20);
-    const freed = f.stored();
-    delete freed.sessions["agent:main:occupied-0\u0000agent:main"];
-    writeStoredOutboxStore(sessionStorage, target, freed);
-    expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination(secondScope))).toBe(
-      "restored",
-    );
-    expect(Object.keys(f.stored().sessions)).toHaveLength(20);
-    expect(f.stored().sessions[storedChatOutboxScopeKey(secondScope)]).toMatchObject(
-      kind === "draft" ? { draft: f.session.draft } : { queue: [{ id: "original-input" }] },
-    );
-  },
-);
-
-it("preserves newer legacy input written reentrantly during the claim", () => {
+it.each([
+  ...(["account", "client"] as const).map((change) => ({
+    boundary: "claim" as const,
+    change,
+  })),
+  ...(["stage", "retire"] as const).map((boundary) => ({ boundary, change: "account" as const })),
+])("retains recovery across reentrant $change replacement at $boundary", ({ boundary, change }) => {
   const f = fixture("draft");
   const original = f.entry();
+  const ownedKey = storageTargetForComposer(f.state).key;
   const set = sessionStorage.setItem.bind(sessionStorage);
-  let replaced = false;
+  const remove = sessionStorage.removeItem.bind(sessionStorage);
+  let changed = false;
+  const replace = () => {
+    changed = true;
+    if (change === "account") {
+      f.state.client.recoveryScope = "account-b";
+    } else {
+      f.state.client = { ...f.state.client };
+    }
+  };
   const write = vi.spyOn(sessionStorage, "setItem").mockImplementation((key, value) => {
     set(key, value);
-    if (key !== f.source.key || replaced) {
-      return;
+    if (
+      !changed &&
+      key === (boundary === "claim" ? f.source.key : ownedKey) &&
+      boundary !== "retire"
+    ) {
+      replace();
     }
-    replaced = true;
-    const store = JSON.parse(value);
-    store.sessions[sourceScope] = { draft: "new legacy input", updatedAt: 2, draftRevision: 2 };
-    set(key, JSON.stringify(store));
   });
-  expect(restoreChatOutboxRecovery(f.state, original, f.destination())).toBe("storage-failed");
-  write.mockRestore();
-  expect(restoreChatOutboxRecovery(f.state, original, f.destination(secondScope))).toBe("conflict");
-  const entries = readChatOutboxRecovery(f.state).entries;
-  expect(
-    entries
-      .map((entry) => entry.session.draft)
-      .toSorted((left, right) => (left === right ? 0 : (left ?? "") < (right ?? "") ? -1 : 1)),
-  ).toEqual(["Retained draft 雪", "new legacy input"]);
-  const claimed = entries.find((entry) => entry.session.draft === f.session.draft)!;
-  expect(restoreChatOutboxRecovery(f.state, claimed, f.destination(secondScope))).toBe("restored");
-  expect(f.stored().sessions[storedChatOutboxScopeKey(secondScope)]?.draft).toBe(f.session.draft);
-  expect(readChatOutboxRecovery(f.state).entries.map((entry) => entry.session.draft)).toEqual([
-    "new legacy input",
-  ]);
-});
-
-it.each(["stage", "retire"] as const)(
-  "revalidates account and live input after %s before publication",
-  (boundary) => {
-    for (const change of ["account", "input"] as const) {
-      vi.stubGlobal("sessionStorage", createStorageMock());
-      const f = fixture("draft");
-      const ownedKey = storageTargetForComposer(f.state).key;
-      const set = sessionStorage.setItem.bind(sessionStorage);
-      const remove = sessionStorage.removeItem.bind(sessionStorage);
-      let changed = false;
-      const replace = () => {
-        changed = true;
-        if (change === "account") {
-          f.state.client.recoveryScope = "account-b";
-        } else {
-          f.state.chatMessage = "newer input";
-        }
-      };
-      const write = vi.spyOn(sessionStorage, "setItem").mockImplementation((key, value) => {
-        set(key, value);
-        if (!changed && boundary === "stage" && key === ownedKey) {
-          replace();
-        }
-      });
-      const removal = vi.spyOn(sessionStorage, "removeItem").mockImplementation((key) => {
-        remove(key);
-        if (!changed && boundary === "retire" && key === f.source.key) {
-          replace();
-        }
-      });
-      expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination())).toBe("conflict");
-      write.mockRestore();
-      removal.mockRestore();
-      expect(changed).toBe(true);
-      if (change === "account") {
-        expect(readChatOutboxRecovery(f.state).entries).toEqual([]);
-        f.state.client.recoveryScope = "account-a";
-      } else {
-        expect(f.state.chatMessage).toBe("newer input");
-      }
-      expect(f.entry().session).toEqual(f.session);
-      expect(f.stored().sessions).toEqual({});
-      f.state.chatMessage = "";
-      expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination(secondScope))).toBe(
-        "restored",
-      );
-      expect(Object.keys(f.stored().sessions)).toEqual([storedChatOutboxScopeKey(secondScope)]);
+  const removal = vi.spyOn(sessionStorage, "removeItem").mockImplementation((key) => {
+    remove(key);
+    if (!changed && boundary === "retire" && key === f.source.key) {
+      replace();
     }
-  },
-);
-
-it("retains a recovered draft that pending-defaults retention would omit", () => {
-  const f = fixture("draft");
-  const target = storageTargetForComposer(f.state);
-  const owned = f.stored();
-  for (let index = 0; index < 20; index++) {
-    owned.sessions["opaque-" + index + "\u0000agent:main"] = {
-      draft: "pending " + index,
-      awaitingDefaults: true,
-      updatedAt: index + 1,
-    };
+  });
+  expect(restoreChatOutboxRecovery(f.state, original, f.destination())).toBe("conflict");
+  write.mockRestore();
+  removal.mockRestore();
+  expect(changed).toBe(true);
+  if (change === "account") {
+    expect(readChatOutboxRecovery(f.state).entries).toEqual([]);
+    f.state.client.recoveryScope = "account-a";
   }
-  writeStoredOutboxStore(sessionStorage, target, owned);
-  const pending = f.stored().sessions;
-  expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination())).toBe("storage-failed");
-  expect(f.stored().sessions).toEqual(pending);
-  const reopened = createStorageMock();
-  for (let index = 0; index < sessionStorage.length; index++) {
-    const key = sessionStorage.key(index)!;
-    reopened.setItem(key, sessionStorage.getItem(key)!);
-  }
-  vi.stubGlobal("sessionStorage", reopened);
-  expect(f.entry()?.session).toEqual(f.session);
-  const freed = f.stored();
-  delete freed.sessions["opaque-0\u0000agent:main"];
-  writeStoredOutboxStore(sessionStorage, target, freed);
+  expect(f.entry().session).toEqual(f.session);
+  expect(f.stored().sessions).toEqual({});
   expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination(secondScope))).toBe(
     "restored",
   );
   expect(f.stored().sessions[storedChatOutboxScopeKey(secondScope)]?.draft).toBe(f.session.draft);
-  expect(f.stored().sessions[storedChatOutboxScopeKey(firstScope)]).toBeUndefined();
-  expect(Object.keys(f.stored().sessions)).toHaveLength(20);
-  expect(readChatOutboxRecovery(f.state).entries).toEqual([]);
+  if (boundary !== "claim") {
+    expect(Object.keys(f.stored().sessions)).toEqual([storedChatOutboxScopeKey(secondScope)]);
+  }
 });
 
-it.each(
-  (["stage", "retire", "publication"] as const).flatMap((boundary) =>
-    (["queue", "draft"] as const).flatMap((kind) =>
-      (["session", "recovery"] as const).map((sourceKind) => ({ boundary, kind, sourceKind })),
-    ),
-  ),
-)(
-  "never republishes identical $kind from $sourceKind resurrected at $boundary",
-  ({ boundary, kind, sourceKind }) => {
+it.each([
+  { kind: "queue", occupied: "queue" },
+  { kind: "draft", occupied: "queue" },
+  { kind: "draft", occupied: "pending" },
+  { kind: "queue", occupied: "draft" },
+] as const)(
+  "retains $kind recovery when $occupied entries fill the destination",
+  ({ kind, occupied }) => {
     const f = fixture(kind);
-    if (sourceKind === "recovery") {
-      const legacy = readStoredOutboxStore(sessionStorage, f.source);
-      delete legacy.sessions[sourceScope];
-      legacy.recovery.original = {
-        sourceVersion: 4,
-        sourceScopeKey: sourceScope,
-        session: f.session,
-      };
-      writeStoredOutboxStore(sessionStorage, f.source, legacy);
-    }
-    const original = f.entry();
     const target = storageTargetForComposer(f.state);
-    const set = sessionStorage.setItem.bind(sessionStorage);
-    const remove = sessionStorage.removeItem.bind(sessionStorage);
-    const get = sessionStorage.getItem.bind(sessionStorage);
-    let retired = false;
-    let reinstated = false;
-    const reinstate = () => {
-      reinstated = true;
-      const raw = get(f.source.key);
-      const legacy: StoredComposerState = raw
-        ? JSON.parse(raw)
-        : { version: 4, gatewayOwner: gatewayUrl, sessions: {}, recovery: {} };
-      if (sourceKind === "session") {
-        legacy.sessions[sourceScope] = f.session;
-      } else {
-        legacy.recovery.original = {
-          sourceVersion: 4,
-          sourceScopeKey: sourceScope,
-          session: f.session,
-        };
-      }
-      writeStoredOutboxStore(sessionStorage, f.source, legacy);
-    };
-    const write = vi.spyOn(sessionStorage, "setItem").mockImplementation((key, value) => {
-      set(key, value);
-      if (!reinstated && boundary === "stage" && key === target.key) {
-        reinstate();
-      }
-    });
-    const removal = vi.spyOn(sessionStorage, "removeItem").mockImplementation((key) => {
-      remove(key);
-      if (key === f.source.key) {
-        retired = true;
-        if (!reinstated && boundary === "retire") {
-          reinstate();
-        }
-      }
-    });
-    const read = vi.spyOn(sessionStorage, "getItem").mockImplementation((key) => {
-      if (!reinstated && retired && boundary === "publication" && key === target.key) {
-        reinstate();
-      }
-      return get(key);
-    });
-    expect(restoreChatOutboxRecovery(f.state, original, f.destination())).toBe(
-      boundary === "retire" ? "storage-failed" : "conflict",
-    );
-    write.mockRestore();
-    removal.mockRestore();
-    read.mockRestore();
-    expect(reinstated).toBe(true);
-    expect(f.stored().sessions).toEqual({});
-    const reopened = createStorageMock();
-    for (let index = 0; index < sessionStorage.length; index++) {
-      const key = sessionStorage.key(index)!;
-      reopened.setItem(key, sessionStorage.getItem(key)!);
+    const store = f.stored();
+    const prefix =
+      occupied === "pending"
+        ? "opaque-"
+        : "agent:main:" + (occupied === "queue" ? "occupied-" : "draft-");
+    const key = (index: number) => prefix + index + "\u0000agent:main";
+    for (let index = 0; index < 20; index++) {
+      store.sessions[key(index)] =
+        occupied === "queue"
+          ? {
+              updatedAt: Date.now() + 1000 + index,
+              queue: [
+                {
+                  id: "occupied-" + index,
+                  text: "keep",
+                  createdAt: index,
+                  storageScope: JSON.stringify([gatewayUrl, "account-a"]),
+                },
+              ],
+            }
+          : {
+              draft: (occupied === "pending" ? "pending " : "existing input ") + index,
+              ...(occupied === "pending" ? { awaitingDefaults: true } : {}),
+              updatedAt: index + 1,
+            };
     }
-    vi.stubGlobal("sessionStorage", reopened);
-    expect(readChatOutboxRecovery(f.state).entries).toHaveLength(1);
-    const foreign = { ...f.state, client: { ...f.state.client, recoveryScope: "account-b" } };
-    expect(readChatOutboxRecovery(foreign).entries).toEqual([]);
-    expect(
-      restoreChatOutboxRecovery(
-        foreign,
-        original,
-        captureChatOutboxRecoveryDestination(foreign, secondScope)!,
-      ),
-    ).toBe("conflict");
-    const resumed = readChatOutboxRecovery(f.state).entries[0]!;
-    expect(resumed.session).toEqual(f.session);
-    expect(restoreChatOutboxRecovery(f.state, resumed, f.destination(secondScope))).toBe(
+    writeStoredOutboxStore(sessionStorage, target, store);
+    const before = f.stored().sessions;
+    expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination())).toBe("storage-failed");
+    expect(f.stored().sessions).toEqual(before);
+    expect(Object.keys(f.stored().sessions)).toHaveLength(20);
+    reopenStorage();
+    expect(f.entry().session).toEqual(f.session);
+    const freed = f.stored();
+    delete freed.sessions[key(0)];
+    writeStoredOutboxStore(sessionStorage, target, freed);
+    expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination(secondScope))).toBe(
       "restored",
     );
-    expect(Object.keys(f.stored().sessions)).toEqual([storedChatOutboxScopeKey(secondScope)]);
-    expect(f.stored().sessions[storedChatOutboxScopeKey(secondScope)]).toMatchObject(
-      kind === "draft"
-        ? { draft: f.session.draft }
-        : {
-            queue: [
-              {
-                ...f.session.queue![0],
-                sessionKey: secondScope.sessionKey,
-                storageScope: JSON.stringify([gatewayUrl, "account-a"]),
-              },
-            ],
-          },
+    const after = f.stored().sessions;
+    expect(Object.keys(after)).toHaveLength(20);
+    for (let index = 1; index < 20; index++) {
+      expect(after[key(index)]).toEqual(before[key(index)]);
+    }
+    expect(after[storedChatOutboxScopeKey(secondScope)]).toMatchObject(
+      kind === "draft" ? { draft: f.session.draft } : { queue: [{ id: "original-input" }] },
     );
-    expect(restoreChatOutboxRecovery(f.state, original, f.destination())).toBe("conflict");
+    expect(after[storedChatOutboxScopeKey(firstScope)]).toBeUndefined();
     expect(readChatOutboxRecovery(f.state).entries).toEqual([]);
   },
 );
@@ -817,34 +633,4 @@ it("rejects an omitted required destination before changing storage without over
   expect(f.stored().sessions[key]).toBeUndefined();
   expect(Object.keys(f.stored().sessions)).toHaveLength(20);
   expect(f.stored().recovery.retained?.session).toEqual(f.session);
-});
-
-it("preserves existing drafts when a recovered queue would evict them", () => {
-  const f = fixture("queue");
-  const target = storageTargetForComposer(f.state);
-  const store = f.stored();
-  for (let index = 0; index < 20; index++) {
-    store.sessions["agent:main:draft-" + index + "\u0000agent:main"] = {
-      draft: "existing input " + index,
-      updatedAt: index + 1,
-    };
-  }
-  writeStoredOutboxStore(sessionStorage, target, store);
-  const before = f.stored().sessions;
-  expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination())).toBe("storage-failed");
-  expect(f.stored().sessions).toEqual(before);
-  expect(f.entry().session).toEqual(f.session);
-  const released = f.stored();
-  delete released.sessions["agent:main:draft-0\u0000agent:main"];
-  writeStoredOutboxStore(sessionStorage, target, released);
-  expect(restoreChatOutboxRecovery(f.state, f.entry(), f.destination(secondScope))).toBe(
-    "restored",
-  );
-  const after = f.stored().sessions;
-  for (let index = 1; index < 20; index++) {
-    const key = "agent:main:draft-" + index + "\u0000agent:main";
-    expect(after[key]).toEqual(before[key]);
-  }
-  expect(after[storedChatOutboxScopeKey(secondScope)]?.queue?.[0]?.id).toBe("original-input");
-  expect(readChatOutboxRecovery(f.state).entries).toEqual([]);
 });

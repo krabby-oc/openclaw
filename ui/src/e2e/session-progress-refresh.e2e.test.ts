@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Page } from "playwright";
 import { expect, it } from "vitest";
+import { openChatDetails } from "./chat-details.test-support.ts";
 import {
   captureUiProof,
   createChatFlowE2eSuite,
@@ -91,14 +92,22 @@ suite.define(() => {
         const scenario = refreshScenario();
         const gateway = await installMockGateway(page, scenario);
         await page.goto(`${suite.server.baseUrl}chat`);
-        const card = page.locator(".session-progress-card--composer");
+        const card = page.locator('[data-progress-card-placement="details"]');
+        await page.locator(".agent-chat__composer-combobox textarea").fill("Keep this draft.");
+        await openChatDetails(page);
         await card.waitFor();
+        if (collapsed) {
+          await card.locator("summary").click();
+        }
         await waitForChatScrollIdle(page);
         await expect
           .poll(() => card.evaluate((element) => (element as HTMLDetailsElement).open))
           .toBe(!collapsed);
-        await card.getByRole("button", { name: "Refresh task progress", exact: true }).waitFor();
-        const button = card.locator(".session-progress-card__refresh");
+        const options = card.getByRole("button", { name: "Task progress options", exact: true });
+        expect(await card.locator("summary button:visible").count()).toBe(1);
+        await options.click();
+        await card.getByRole("menuitem", { name: "Refresh task progress", exact: true }).waitFor();
+        const button = card.locator(".session-progress-card__refresh[aria-busy]");
         await button.locator("svg path").first().waitFor({ state: "attached" });
         const idleIcon = await button.locator("svg").innerHTML();
         const iconBounds = await button.locator("svg").boundingBox();
@@ -107,7 +116,6 @@ suite.define(() => {
         expect(bounds).not.toBeNull();
         expect(bounds!.x).toBeGreaterThanOrEqual(0);
         expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
-        await page.locator(".agent-chat__composer-combobox textarea").fill("Keep this draft.");
         const initial = await transcriptSnapshot(page);
         const originalCard = await card.elementHandle();
         const timestamp = await card.locator("time").getAttribute("datetime");
@@ -115,8 +123,10 @@ suite.define(() => {
           .locator("summary")
           .evaluate((element) => element.getBoundingClientRect().height);
         const markdown = await card.locator(".session-progress-card__markdown").textContent();
+        await page.keyboard.press("Escape");
         await page.mouse.move(0, 0);
         await captureUiProof(suite, page, name, "after-idle.png");
+        await options.click();
         await button.click();
         const request = await gateway.waitForRequest("progressCard.refresh");
         expect(request.params).toEqual({
@@ -124,6 +134,7 @@ suite.define(() => {
           idempotencyKey: expect.any(String),
         });
         await expect.poll(() => button.getAttribute("data-state")).toBe("pending");
+        await options.click();
         expect(await button.isDisabled()).toBe(true);
         expect(await button.getAttribute("aria-busy")).toBe("true");
         const pendingIcon = button.locator("svg");
@@ -137,14 +148,15 @@ suite.define(() => {
           expect(await pendingIcon.isVisible()).toBe(true);
         } else {
           expect(
-            await pendingIcon.evaluate((element) => getComputedStyle(element).animationName),
-          ).toBe("session-progress-refresh-spin");
+            await pendingIcon.evaluate((element) => element.getAnimations()[0]?.playState),
+          ).toBe("running");
         }
         expect(
           await card
             .locator("summary")
             .evaluate((element) => element.getBoundingClientRect().height),
         ).toBe(summaryHeight);
+        await page.keyboard.press("Escape");
         const pendingStatus = card.locator(".session-progress-card__refresh-status");
         expect(
           await pendingStatus.evaluate((element) => element.getBoundingClientRect().width),
@@ -195,6 +207,7 @@ suite.define(() => {
           !collapsed,
         );
         expect(await originalCard!.evaluate((element) => element.isConnected)).toBe(true);
+        expect(await page.locator(".chat-details:popover-open").isVisible()).toBe(true);
         expect(await transcriptSnapshot(page)).toEqual(initial);
         expect(await gateway.getRequests("chat.send")).toHaveLength(0);
         expect(await gateway.getRequests("sessions.dispatch")).toHaveLength(0);
@@ -215,19 +228,23 @@ suite.define(() => {
       const scenario = refreshScenario();
       const gateway = await installMockGateway(page, scenario);
       await page.goto(`${suite.server.baseUrl}chat`);
-      const card = page.locator(".session-progress-card--composer");
+      const card = page.locator('[data-progress-card-placement="details"]');
+      await openChatDetails(page);
       await card.waitFor();
       await waitForChatScrollIdle(page);
       const initial = await transcriptSnapshot(page);
       const timestamp = await card.locator("time").getAttribute("datetime");
-      const button = card.locator(".session-progress-card__refresh");
+      const options = card.getByRole("button", { name: "Task progress options", exact: true });
+      await options.click();
+      const button = card.locator(".session-progress-card__refresh[aria-busy]");
       await button.click();
       const request = await gateway.waitForRequest("progressCard.refresh");
       await gateway.rejectDeferred("progressCard.refresh", {
         code: "UNAVAILABLE",
         message: "The synthetic worker is unavailable.",
       });
-      await card.getByRole("button", { name: "Retry progress refresh" }).waitFor();
+      await options.click();
+      await card.getByRole("menuitem", { name: "Retry progress refresh" }).waitFor();
       expect(await button.isEnabled()).toBe(true);
       const failureStatus = card.locator(".session-progress-card__refresh-status");
       expect(await failureStatus.textContent()).toBe("Could not refresh. Previous update kept.");

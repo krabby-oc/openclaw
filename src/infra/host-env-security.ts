@@ -1,6 +1,6 @@
-// Filters host environment variables before passing them to runtimes.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { sortUniqueStrings } from "@openclaw/normalization-core/string-normalization";
+import { resolveNodeServiceIdentityEnvironment } from "../daemon/constants.js";
 import { HOST_ENV_SECURITY_POLICY } from "./host-env-security-policy.js";
 import { markOpenClawExecEnv, SUBAGENT_EXEC_ENV_VAR } from "./openclaw-exec-env.js";
 
@@ -21,6 +21,10 @@ const HOST_SHELL_WRAPPER_ALLOWED_OVERRIDE_ENV_KEYS = new Set([
 const HOST_DANGEROUS_ENV_KEYS = new Set(HOST_ENV_SECURITY_POLICY.blockedKeys);
 const HOST_DANGEROUS_INHERITED_ENV_KEYS = new Set(HOST_ENV_SECURITY_POLICY.blockedInheritedKeys);
 const HOST_DANGEROUS_OVERRIDE_ENV_KEYS = new Set(HOST_ENV_SECURITY_POLICY.blockedOverrideKeys);
+const NODE_SERVICE_ENV_KEYS = new Set([
+  ...Object.keys(resolveNodeServiceIdentityEnvironment()),
+  "OPENCLAW_GATEWAY_SERVICE_PID",
+]);
 const CARGO_TARGET_EXECUTABLE_OVERRIDE_ENV_KEY = /^CARGO_TARGET_[A-Z0-9_]+_(?:LINKER|RUNNER)$/;
 const GIT_ALLOW_PROTOCOL_ENV_KEY = "GIT_ALLOW_PROTOCOL";
 const GIT_PROTOCOL_FROM_USER_ENV_KEY = "GIT_PROTOCOL_FROM_USER";
@@ -40,9 +44,8 @@ export function withHostExecInheritedEnvOmitted<T>(keys: Iterable<string>, run: 
   return scopedBlockedInheritedEnvKeys.run(normalized, run);
 }
 
-function isScopedBlockedHostExecEnvVarName(rawKey: string): boolean {
-  const key = normalizeEnvVarKey(rawKey);
-  return key ? (scopedBlockedInheritedEnvKeys.getStore()?.has(key.toUpperCase()) ?? false) : false;
+function isScopedBlockedHostExecEnvVarName(key: string): boolean {
+  return scopedBlockedInheritedEnvKeys.getStore()?.has(key.toUpperCase()) ?? false;
 }
 
 function isNoPagerOverride(key: string, value: string): boolean {
@@ -52,19 +55,13 @@ function isNoPagerOverride(key: string, value: string): boolean {
   );
 }
 
-function isShellWrapperAllowedOverrideEnvVarName(rawKey: string): boolean {
-  const key = normalizeEnvVarKey(rawKey, { portable: true });
-  if (!key) {
-    return false;
-  }
+function isShellWrapperAllowedOverrideEnvVarName(key: string): boolean {
   const upper = key.toUpperCase();
   return HOST_SHELL_WRAPPER_ALLOWED_OVERRIDE_ENV_KEYS.has(upper) || upper.startsWith("LC_");
 }
 
-type HostExecEnvSanitizationResult = {
+type HostExecEnvSanitizationResult = HostExecEnvOverrideDiagnostics & {
   env: Record<string, string>;
-  rejectedOverrideBlockedKeys: string[];
-  rejectedOverrideInvalidKeys: string[];
 };
 
 type HostExecEnvOverrideDiagnostics = {
@@ -155,49 +152,39 @@ function sanitizeInheritedGitAllowProtocolValue(value: string): string {
     .join(":");
 }
 
-function sanitizeHostInheritedEnvEntry(key: string, value: string): [string, string] | null {
+function sanitizeHostInheritedEnvValue(key: string, value: string): string | undefined {
   // Preserve inherited Git allowlists without widening malformed or unsafe entries by deletion.
   // Protocols outside Git's safe default set are removed instead of being passed through.
   if (key.toUpperCase() === GIT_ALLOW_PROTOCOL_ENV_KEY) {
-    return [key, sanitizeInheritedGitAllowProtocolValue(value)];
+    return sanitizeInheritedGitAllowProtocolValue(value);
   }
   // Preserve non-permissive Git boolean values. Permissive values must become explicit `0`
   // because Git's unset default still permits protocols with policy `user`.
   if (key.toUpperCase() === GIT_PROTOCOL_FROM_USER_ENV_KEY) {
-    return [
-      key,
-      isPermissiveGitProtocolFromUserValue(value) ? GIT_PROTOCOL_FROM_USER_DISABLED_VALUE : value,
-    ];
+    return isPermissiveGitProtocolFromUserValue(value)
+      ? GIT_PROTOCOL_FROM_USER_DISABLED_VALUE
+      : value;
   }
   if (isDangerousHostInheritedEnvVarName(key)) {
-    return null;
+    return undefined;
   }
-  return [key, value];
+  return value;
 }
 
 function sanitizeHostEnvOverridesWithDiagnostics(params?: {
   overrides?: Record<string, string> | null;
   blockPathOverrides?: boolean;
 }): {
-  acceptedOverrides?: Record<string, string>;
+  acceptedOverrides: Record<string, string>;
   rejectedOverrideBlockedKeys: string[];
   rejectedOverrideInvalidKeys: string[];
 } {
-  const overrides = params?.overrides ?? undefined;
-  if (!overrides) {
-    return {
-      acceptedOverrides: undefined,
-      rejectedOverrideBlockedKeys: [],
-      rejectedOverrideInvalidKeys: [],
-    };
-  }
-
   const blockPathOverrides = params?.blockPathOverrides ?? true;
   const acceptedOverrides: Record<string, string> = {};
   const rejectedBlocked: string[] = [];
   const rejectedInvalid: string[] = [];
 
-  for (const [rawKey, value] of Object.entries(overrides)) {
+  for (const [rawKey, value] of Object.entries(params?.overrides ?? {})) {
     if (typeof value !== "string") {
       continue;
     }
@@ -208,13 +195,9 @@ function sanitizeHostEnvOverridesWithDiagnostics(params?: {
       continue;
     }
     const upper = normalized.toUpperCase();
-    if (isScopedBlockedHostExecEnvVarName(upper)) {
-      rejectedBlocked.push(upper);
-      continue;
-    }
     // PATH is part of the security boundary (command resolution + safe-bin checks). Never allow
     // request-scoped PATH overrides from agents/gateways.
-    if (blockPathOverrides && upper === "PATH") {
+    if (isScopedBlockedHostExecEnvVarName(upper) || (blockPathOverrides && upper === "PATH")) {
       rejectedBlocked.push(upper);
       continue;
     }
@@ -247,25 +230,22 @@ export function sanitizeHostExecEnvWithDiagnostics(params?: {
 
   const merged: Record<string, string> = {};
   for (const [key, value] of listNormalizedEnvEntries(baseEnv)) {
+    // Child CLIs must not select the node service as their Gateway; requested overrides still apply.
+    if (baseEnv.OPENCLAW_SERVICE_KIND === "node" && NODE_SERVICE_ENV_KEYS.has(key.toUpperCase())) {
+      continue;
+    }
     if (isScopedBlockedHostExecEnvVarName(key)) {
       continue;
     }
-    const sanitizedEntry = sanitizeHostInheritedEnvEntry(key, value);
-    if (!sanitizedEntry) {
-      continue;
+    const sanitized = sanitizeHostInheritedEnvValue(key, value);
+    if (sanitized !== undefined) {
+      merged[key] = sanitized;
     }
-    const [sanitizedKey, sanitizedValue] = sanitizedEntry;
-    merged[sanitizedKey] = sanitizedValue;
   }
 
-  const overrideResult = sanitizeHostEnvOverridesWithDiagnostics({
-    overrides: params?.overrides ?? undefined,
-    blockPathOverrides: params?.blockPathOverrides ?? true,
-  });
-  if (overrideResult.acceptedOverrides) {
-    for (const [key, value] of Object.entries(overrideResult.acceptedOverrides)) {
-      merged[key] = value;
-    }
+  const overrideResult = sanitizeHostEnvOverridesWithDiagnostics(params);
+  for (const [key, value] of Object.entries(overrideResult.acceptedOverrides)) {
+    merged[key] = value;
   }
 
   return {

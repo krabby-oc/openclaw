@@ -15,6 +15,7 @@ import {
 import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.ts";
 import { waitForControlUiGatewayReady } from "../test-helpers/control-ui-e2e-readiness.ts";
 import { controlUiSessionUrl } from "../test-helpers/control-ui-e2e.ts";
+import { enterControlUiSession } from "../test-helpers/control-ui-session-entry.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
 const captureEnabled = process.env.OPENCLAW_CAPTURE_UI_PROOF === "1";
@@ -53,7 +54,6 @@ type WorkspaceIconElement = HTMLElement & {
   routeUrl: string;
   authTokens: string[];
   authReady: boolean;
-  requestUpdate: () => void;
   updateComplete: Promise<unknown>;
 };
 
@@ -252,7 +252,7 @@ const suite = createControlUiE2eSuite({
         agents: {
           defaults: {
             workspace: owner.state.workspaceDir,
-            model: { primary: "openai/gpt-5.6-luna" },
+            model: { primary: "openai/gpt-4.1" },
           },
           entries: {
             main: { identity: { name: "Avatar Proof", avatar: "agent-avatar.png" } },
@@ -332,7 +332,8 @@ async function openAvatarChat(page: Page) {
   expect(dashboard.code, handoff.reason ?? dashboard.stderr).toBe(0);
   const url = new URL(controlUiSessionUrl(suite.server.baseUrl, sessionKey, "chat"));
   url.hash = new URL(handoff.browserUrl).hash;
-  expect((await page.goto(url.toString()))?.status()).toBe(200);
+  expect((await page.goto(url.toString()))?.status()).toBe(404);
+  await enterControlUiSession(page);
   await waitForControlUiGatewayReady(page);
   await page.getByText(reply, { exact: true }).waitFor();
 }
@@ -509,7 +510,7 @@ suite.define(() => {
       await expectReleasedResponses(page, "route-404", 1);
       expect(await consumer.locator(".workspace-icon-fallback").isVisible()).toBe(true);
       await consumer.evaluate(async (element: WorkspaceIconElement) => {
-        element.requestUpdate();
+        element.authTokens = [...element.authTokens];
         await element.updateComplete;
       });
       expect(readServerResponses("route-404")).toHaveLength(1);
@@ -529,14 +530,14 @@ suite.define(() => {
       const group = page
         .locator(".chat-group")
         .filter({ has: page.getByText(reply, { exact: true }) });
-      const image = group.locator("img.chat-avatar.assistant");
       await expect
-        .poll(() => group.locator(".chat-avatar-slot").getAttribute("data-avatar-state"))
-        .toBe("failed");
-      expect(await group.locator(".chat-avatar.assistant:not(img)").isVisible()).toBe(true);
-      expect(await image.count()).toBe(1);
-      expect(await image.getAttribute("src")).toBeNull();
-      expect(await image.isVisible()).toBe(false);
+        .poll(async () => ({
+          fallback: await group
+            .locator(".identity-avatar--agent.chat-avatar.assistant .identity-avatar__fallback")
+            .isVisible(),
+          sourcedImages: await group.locator("img.chat-avatar.assistant[src]").count(),
+        }))
+        .toEqual({ fallback: true, sourcedImages: 0 });
       expect(await group.evaluate((element) => element.isConnected)).toBe(true);
       await captureStreamProof(page, "identity-404");
     });
@@ -599,7 +600,7 @@ suite.define(() => {
       }
       await page.clock.runFor(29_000);
       await consumer.evaluate(async (element: WorkspaceIconElement) => {
-        element.requestUpdate();
+        element.authTokens = [...element.authTokens];
         await element.updateComplete;
       });
       await expectReleasedResponses(page, "workspace-503", 4);

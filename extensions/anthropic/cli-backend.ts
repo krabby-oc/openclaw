@@ -18,6 +18,7 @@ import {
   resolveClaudeCliExecutionArgs,
   resolveClaudeCliThinkingEnv,
 } from "./cli-shared.js";
+import { appendClaudeCliToolNamingGuidance } from "./cli-tool-naming.js";
 
 type ClaudeCliAuthCredential =
   | { type: "oauth"; access: string; expires: number }
@@ -59,6 +60,7 @@ const CLAUDE_NATIVE_TOOL_CAPABILITIES: Readonly<Record<string, string>> = {
   bash: "exec",
   webfetch: "web_fetch",
   websearch: "web_search",
+  askuserquestion: "ask_user",
 };
 
 function projectClaudeNativeToolAuthority(nativeTools: readonly string[]): readonly string[] {
@@ -177,7 +179,8 @@ export function buildAnthropicCliBackend(
     nativeToolMode: "selectable",
     hostOwnedTools: ["exec", "process"],
     toolAvailabilityEnforcement: "execution-args",
-    isolatesInstructionsWithExactTools: true,
+    transformSystemPrompt: ({ systemPrompt, openClawMcpToolNames }) =>
+      appendClaudeCliToolNamingGuidance(systemPrompt, openClawMcpToolNames),
     projectNativeToolAuthority: projectClaudeNativeToolAuthority,
     sideQuestionToolMode: "disabled",
     ownsNativeCompaction: true,

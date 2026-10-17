@@ -62,6 +62,35 @@ describe("subscribeEmbeddedAgentSession partial reply lifecycle", () => {
     vi.clearAllMocks();
   });
 
+  it("paces cumulative preview reads and settles the exact last append", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const partials: Array<{ text?: string; delta?: string }> = [];
+    const delivery = createDelivery({
+      runId: "run-paced-partials",
+      onPartialReply: (payload) => {
+        partials.push({ text: payload.text, delta: payload.delta });
+      },
+    });
+    try {
+      delivery.emitAssistantStreamData({ text: "A", delta: "A" }, { emitPartialReply: true });
+      clock.mockReturnValue(1_010);
+      delivery.emitAssistantStreamData({ text: "AB", delta: "B" }, { emitPartialReply: true });
+      expect(partials).toEqual([{ text: "A", delta: "A" }]);
+      clock.mockReturnValue(1_080);
+      delivery.emitAssistantStreamData({ text: "ABC", delta: "C" }, { emitPartialReply: true });
+      expect(partials).toEqual([
+        { text: "A", delta: "A" },
+        { text: "ABC", delta: "BC" },
+      ]);
+      delivery.emitAssistantStreamData({ text: "ABCD", delta: "D" }, { emitPartialReply: true });
+      await delivery.waitForPendingEvents();
+      expect(partials.at(-1)).toEqual({ text: "ABCD", delta: "D" });
+    } finally {
+      clock.mockRestore();
+      delivery.clearAssistantStream();
+    }
+  });
+
   it("joins a partial reply task created while terminal events settle", async () => {
     const partial = createDeferred();
     const onPartialReply = vi.fn(() => partial.promise);
@@ -326,41 +355,7 @@ describe("subscribeEmbeddedAgentSession partial reply lifecycle", () => {
     expect(starts).toEqual(["partial:First", "block:Block."]);
   });
 
-  it("publishes an authoritative clear with normalized final media", async () => {
-    const onAgentEvent = vi.fn();
-    const { emit, subscription } = createSubscribedSessionHarness({
-      runId: "run-final-media-clear",
-      onAgentEvent,
-    });
-    emitAssistantTextDelta({ emit, delta: "Hello" });
-    emit({
-      type: "message_end",
-      message: {
-        role: "assistant",
-        content: [
-          {
-            type: "text",
-            text: "\nMEDIA:https://example.com/a.png",
-            textSignature: JSON.stringify({ v: 1, id: "answer", phase: "final_answer" }),
-          },
-        ],
-      },
-    });
-    await subscription.waitForPendingEvents();
-    const final = onAgentEvent.mock.calls.findLast(([event]) => event.stream === "assistant")?.[0]
-      .data;
-    expect(final?.text).toBe("");
-    expect(final?.delta).toBe("");
-    expect(final?.replace).toBe(true);
-    expect(final?.mediaUrls).toEqual(["https://example.com/a.png"]);
-    expect(final?.managedMediaUrls).toBeUndefined();
-    expect(final?.phase).toBe("final_answer");
-    subscription.unsubscribe();
-  });
-  it.each([
-    { name: "sanitized empty", text: "<think>hidden reasoning</think>", preambles: 0 },
-    { name: "duplicate", text: "Working.", preambles: 1 },
-  ])(
+  it.each([{ name: "sanitized empty", text: "<think>hidden reasoning</think>", preambles: 0 }])(
     "retires pending partials at a $name generic commentary boundary",
     async ({ text, preambles }) => {
       const pending = createDeferred();

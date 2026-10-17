@@ -6,9 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { codexModel, threadStartResult } from "./bounded-turn.test-harness.js";
 import { CodexAppServerClient } from "./client.js";
 import { turnStartResult } from "./codex-app-server.test-fixtures.js";
-import type { CodexAppServerStartOptions } from "./config.js";
+import type { CodexAppServerStartOptions, CodexPluginConfig } from "./config.js";
 import { runCodexIsolatedCompletion } from "./isolated-completion.js";
-import { resetSharedCodexAppServerClientForTests } from "./shared-client.js";
+import { resetSharedCodexAppServerClientForTests } from "./shared-client.test-support.js";
 import { createClientHarness } from "./test-support.js";
 import { CODEX_APP_SERVER_VERSION } from "./version.js";
 
@@ -175,7 +175,7 @@ function createPluginConfig(root: string, homeScope: "user" | "agent", proxy = f
       transport: "stdio",
       homeScope,
     },
-  };
+  } satisfies CodexPluginConfig;
 }
 
 function readStart(

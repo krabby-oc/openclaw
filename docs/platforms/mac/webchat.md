@@ -23,6 +23,12 @@ Gateway and account changes still refresh hidden Dashboard windows. Saved web
 drafts recover within the same Gateway address and authenticated account; they
 are not copied to a different Gateway, account, or recreated SSH tunnel address.
 
+If the Dashboard cannot load, it shows a recovery page with **Reload** and
+**Connection Settings…**. Choose **Navigate → Reload** or press **Cmd-R** while a
+Dashboard window is active to reload its current page. Gateway HTTP errors with
+plain-text or JSON bodies use the recovery page; HTML sign-in pages from an
+authenticated proxy remain available in the window.
+
 The native chat features below connect to the Gateway and default to the primary
 session for the selected agent (`main`, or `global` when `session.scope` is
 `global`). Quick Chat remains a native floating composer in either experience.
@@ -37,6 +43,11 @@ roster, Cmd-K palette, menus, window management, and Gateway selection remain
 native. Selecting a thread in the sidebar or palette navigates the existing web
 pane without reloading it. **New Thread** stays in the sidebar and on Shift-Cmd-N:
 it creates the session through the native owner, then opens it in that pane.
+
+The Web experience shares the desktop web rail and panel layout with the Tauri desktop app on macOS, Linux, and Windows.
+Its panel header and content header occupy the same 52px titlebar row, with back/forward before the content title and search in the rail.
+On macOS, the panel title clears the traffic lights and the rail starts below them; Linux/Windows keep the rail aligned with the top row and reserve the top-right caption buttons.
+Sessions, Pages, and Online each have a trailing Collapse sidebar button; collapsing leaves only expand-sidebar beside the rail, which continues to own New session and search.
 
 The web pane owns sending, drafts, queues, history, read acknowledgements, Find,
 and export. Pane-local keys such as Cmd-F, Return, Shift-Return, and Escape go to
@@ -251,6 +262,34 @@ children show their own signals. Run indicators pause while disconnected.
 For older threads beyond the all-agent overview, switch to **Selected agent**
 and choose **Load more**, or search through **All sessions**.
 
+## Session catalogs
+
+Plugins can add session catalogs to the native sidebar. **Open in OpenClaw** opens
+the conversation; sending its first message adopts it into OpenClaw. Adopted
+sessions stay in their catalog section without a duplicate in the ordinary thread
+list. Catalogs appear for a selected agent and are hidden in the all-agents and
+archived views. Adopted sessions remain reachable in **Search results**,
+independently of collapsed catalog groups. Adopted rows follow the sidebar status
+filter, including archive and snooze changes. Catalog sources require read access;
+deleting a source session also requires write access.
+
+Right-click a catalog heading to group its sessions by **Project**, **Person**, or
+**None**, filter by owner, or choose **Hide from sidebar**. Restore a hidden catalog
+with its toggle under **View options → Session catalogs**. **Show all owners** in
+the same menu clears an owner filter even when it leaves no catalog rows. Grouping and visibility are
+saved locally for each Gateway profile. This deliberately differs from the web
+sidebar, which restores hidden catalogs through Dashboard settings and stores
+the preference in the browser.
+
+**Session sources…** opens the same Gateway's Dashboard Appearance settings, where
+you can manage session sources. The native handoff opens the page without scrolling
+to the Session sources settings block. **Open in Terminal** is not offered because
+the native sidebar has no catalog terminal action. Catalogs refresh every two
+minutes while the sidebar is visible and connected, and immediately when it
+becomes visible or reconnects. **Load more** and **Retry** operate independently
+for each catalog. Source failures stay visible with **Retry**, including before
+the source returns its first session.
+
 ## Online people
 
 The native sidebar's **Online** section includes your own identity and distinguishes
@@ -263,6 +302,17 @@ visible session links, including threads loaded with **Load more**. Recent links
 disappear if they become ineligible. **View Activity** opens that person's Activity
 page in the Dashboard for the same Gateway. Thread rows show other viewers,
 combining duplicate connections and excluding your own identity.
+
+The identity card at the bottom of the native sidebar uses your name and avatar
+from **Online**. When healthy, it shows the current Gateway's name and **Primary**
+when applicable; otherwise it shows **Connecting…**. Click it for the Gateway
+list, current and primary indicators, the option to make an eligible profile
+primary, **Manage Gateways…**, **Open Dashboard**, **Settings…**, **Usage**, and
+**About OpenClaw**. **Retry now** appears while disconnected. The adjacent
+attention button counts requests of the same kind as the oldest pending request
+(questions or approvals); click it for details without changing conversations.
+A separate retry button appears if thread groups fail to load. Batch actions
+stay above the footer.
 
 ## Pending questions and approvals
 
@@ -370,10 +420,10 @@ Right-click the OpenClaw Dock icon for **Open Dashboard** and **Settings…**.
 When more than one Gateway is configured, this menu also lists every Gateway;
 the checkmark follows the selected experience's frontmost Gateway window.
 
-The menu probes health only while open, retaining cached facts between openings.
-Before the first result a card shows **checking…**; failed probes show
+The menu checks health only while open, retaining cached facts between openings.
+Before the first result a card shows **checking…**; failed checks show
 **unreachable** and the last successful contact time when known. Closing the menu
-cancels in-flight probes and closes idle probe connections for saved Gateways with
+cancels in-flight checks and closes idle check connections for saved Gateways with
 no open Web or Native windows. It never disconnects the primary Gateway.
 
 The app also reopens your selected Gateway in the chosen experience after an app
@@ -502,7 +552,7 @@ connection confirmation rules.
 ## How it is wired
 
 - Data plane: Gateway WS methods `chat.history`, `chat.message.get`, `chat.send`, `chat.abort`, `chat.inject`, plus `question.list` and `question.resolve`, and events `chat`, `agent`, `presence`, `tick`, `health`; question cards follow `question.requested` and `question.resolved` events and refresh from `question.list` after reconnects.
-- `chat.history` returns a display-normalized transcript: inline directive tags are stripped from visible text, plain-text tool-call XML payloads (`<tool_call>`, `<function_call>`, `<tool_calls>`, `<function_calls>`, including truncated blocks) and leaked model control tokens are stripped, pure silent-token assistant rows such as exact `NO_REPLY`/`no_reply` are omitted, and oversized rows can be replaced with a truncated placeholder.
+- `chat.history` returns a Gateway-prepared display transcript: inline directive tags, plain-text tool-call XML payloads (`<tool_call>`, `<function_call>`, `<tool_calls>`, `<function_calls>`, including truncated blocks), and leaked model control tokens are stripped. Stored assistant visibility honors display, phase, and final-source facts first, then omits raw assistant text that trims to uppercase `NO_REPLY`; lowercase and wrapped forms remain visible. User text is never classified as silence. Oversized rows can be replaced with a truncated placeholder.
 - Session: defaults to the primary session as above; the UI can switch between sessions.
 - Session groups: `sessions.groups.list`, `sessions.groups.put`, `sessions.groups.rename`, and `sessions.groups.delete` own the path-free group catalog. Write-scoped `sessions.groups.defaults` and `sessions.groups.update` own optional New Session folder/worktree defaults. Membership is the session `category` updated through `sessions.patch` or assigned during `sessions.create`.
 - Unread state: after a session activates and its live history loads successfully, the app clears the unread state it observed. A manual unread marker created while that session is already open remains through refreshes and run completion; leave and reopen the session, or mark it read explicitly, to clear it. Failed history loads do not clear unread state, and a transient patch failure retries on the next activation. During staggered upgrades, an older active app can still send a bare read acknowledgement that clears the marker. Cross-client protection therefore requires every active app to support the acknowledgement contract; update all connected clients before relying on the reminder.

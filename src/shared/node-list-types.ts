@@ -10,6 +10,13 @@ export type NodeWorkerBundleStatus =
   | { status: "installed"; version: string }
   | { status: "missing" };
 
+export const NODE_APPROVAL_STATE_VALUES = [
+  "approved",
+  "pending-approval",
+  "pending-reapproval",
+  "unapproved",
+] as const;
+
 /** Node record returned by gateway node-list endpoints. */
 export type NodeListNode = {
   nodeId: string;
@@ -31,13 +38,14 @@ export type NodeListNode = {
   computerUse?: ComputerUseCapabilityDescriptor;
   /** Node has explicitly enabled session hosting; live slots own current capacity. */
   sessionHost?: boolean;
+  workerHost?: { deviceFolders?: true };
   workerSlots?: WorkerSlotSummary;
   hostStats?: NodeHostStats;
   workerBundle?: NodeWorkerBundleStatus;
   issues?: readonly RuntimeTargetIssue[];
   nodePluginTools?: NodePluginToolDescriptor[];
   permissions?: Record<string, boolean>;
-  approvalState?: "approved" | "pending-approval" | "pending-reapproval" | "unapproved";
+  approvalState?: (typeof NODE_APPROVAL_STATE_VALUES)[number];
   pendingRequestId?: string;
   pendingDeclaredCaps?: string[];
   pendingDeclaredCommands?: string[];

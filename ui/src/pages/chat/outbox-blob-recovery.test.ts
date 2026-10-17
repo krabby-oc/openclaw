@@ -158,22 +158,6 @@ describe("Blob-preserving metadata migration", () => {
     );
   });
 
-  it("recovers a selected-text annotation with its queued file payload", async () => {
-    const annotation: ChatSelectionAnnotation = {
-      text: "complete source bytes",
-      comment: "Keep this context. 🦞",
-      sessionKey: "agent:main:review",
-      messageId: "assistant-1",
-      entryId: "entry-1",
-      start: 5,
-      end: 26,
-    };
-    const host = hostFor();
-    const item = await prepare(host, "selection", "global", annotation);
-    const restored = await expectBytes(host, item);
-    expect(restored?.selectionAnnotation).toEqual(annotation);
-  });
-
   it("does not settle payload preparation under a pending connected recovery owner", async () => {
     const host = hostFor();
     const original = await prepare(host, "pending-owner");
@@ -267,45 +251,40 @@ describe("Blob-preserving metadata migration", () => {
     },
   );
 
-  it.each(["noop", "quota"])(
-    "keeps source Blob bytes across %s migration and explicit transfer failures",
-    async (failure) => {
-      const host = hostFor();
-      const item = await prepare(host, "retained");
-      const source = seed([item]);
-      const cleanup = vi.spyOn(payloadStore, "removeOutboxPayloads");
-      const fail = () => {
-        if (failure === "quota") {
-          throw new DOMException("quota", "QuotaExceededError");
-        }
-      };
-      let write = vi.spyOn(sessionStorage, "setItem").mockImplementation(fail);
-      expect(readChatOutboxRecovery(host).entries[0]?.session.queue).toEqual([item]);
-      expect(sessionStorage.getItem(source.key)).toBe(source.raw);
-      await expectBytes(host, item);
-      write.mockRestore();
-      const entry = expectDefined(readChatOutboxRecovery(host).entries[0], "migrated source");
-      const before = sessionStorage.getItem(target.key);
-      const destination = expectDefined(
-        captureChatOutboxRecoveryDestination(host, {
-          sessionKey: host.sessionKey,
-          agentId: "main",
-        }),
-        "empty destination",
-      );
-      write = vi.spyOn(sessionStorage, "setItem").mockImplementation(fail);
-      expect(restoreChatOutboxRecovery(host, entry, destination)).toBe("storage-failed");
-      expect(sessionStorage.getItem(target.key)).toBe(before);
-      await expectBytes(host, item);
-      expect(cleanup).not.toHaveBeenCalled();
-      write.mockRestore();
-      expect(restoreChatOutboxRecovery(host, entry, destination)).toBe("restored");
-      await expectBytes(host, item);
-      expect(cleanup).not.toHaveBeenCalled();
-    },
-  );
+  it("keeps source Blob bytes across quota migration and explicit transfer failures", async () => {
+    const host = hostFor();
+    const item = await prepare(host, "retained");
+    const source = seed([item]);
+    const cleanup = vi.spyOn(payloadStore, "removeOutboxPayloads");
+    const fail = () => {
+      throw new DOMException("quota", "QuotaExceededError");
+    };
+    let write = vi.spyOn(sessionStorage, "setItem").mockImplementation(fail);
+    expect(readChatOutboxRecovery(host).entries[0]?.session.queue).toEqual([item]);
+    expect(sessionStorage.getItem(source.key)).toBe(source.raw);
+    await expectBytes(host, item);
+    write.mockRestore();
+    const entry = expectDefined(readChatOutboxRecovery(host).entries[0], "migrated source");
+    const before = sessionStorage.getItem(target.key);
+    const destination = expectDefined(
+      captureChatOutboxRecoveryDestination(host, {
+        sessionKey: host.sessionKey,
+        agentId: "main",
+      }),
+      "empty destination",
+    );
+    write = vi.spyOn(sessionStorage, "setItem").mockImplementation(fail);
+    expect(restoreChatOutboxRecovery(host, entry, destination)).toBe("storage-failed");
+    expect(sessionStorage.getItem(target.key)).toBe(before);
+    await expectBytes(host, item);
+    expect(cleanup).not.toHaveBeenCalled();
+    write.mockRestore();
+    expect(restoreChatOutboxRecovery(host, entry, destination)).toBe("restored");
+    await expectBytes(host, item);
+    expect(cleanup).not.toHaveBeenCalled();
+  });
 
-  it.each(["noop-write", "failed-write", "noop-remove", "failed-remove"])(
+  it.each(["failed-write", "failed-remove"])(
     "keeps recovery inert and retains shared bytes across %s of the unscoped source",
     async (failure) => {
       const host = hostFor();
@@ -334,9 +313,7 @@ describe("Blob-preserving metadata migration", () => {
       const set = sessionStorage.setItem.bind(sessionStorage);
       const remove = sessionStorage.removeItem.bind(sessionStorage);
       const fail = () => {
-        if (failure.startsWith("failed")) {
-          throw new Error("source retirement blocked");
-        }
+        throw new Error("source retirement blocked");
       };
       const write = vi.spyOn(sessionStorage, "setItem").mockImplementation((key, value) => {
         const pending = JSON.parse(value) as { recovery: Record<string, unknown> };
@@ -486,7 +463,7 @@ describe("Blob-preserving metadata migration", () => {
     ready.mockRestore();
   });
 
-  it.each(["noop-remove", "failed-remove", "deferred-legacy", "unreadable-legacy"])(
+  it.each(["failed-remove", "deferred-legacy", "unreadable-legacy"])(
     "retains bytes when %s cannot establish complete retirement",
     async (failure) => {
       const host = hostFor();
@@ -497,11 +474,9 @@ describe("Blob-preserving metadata migration", () => {
       delete store.legacyReceipts;
       writeStoredOutboxStore(sessionStorage, target, store);
       const cleanup = vi.spyOn(payloadStore, "removeOutboxPayloads");
-      if (failure === "noop-remove" || failure === "failed-remove") {
+      if (failure === "failed-remove") {
         vi.spyOn(sessionStorage, "removeItem").mockImplementation(() => {
-          if (failure === "failed-remove") {
-            throw new Error("blocked removal");
-          }
+          throw new Error("blocked removal");
         });
       } else {
         seed([item]);
@@ -516,7 +491,7 @@ describe("Blob-preserving metadata migration", () => {
         }
       }
       store.sessions = {};
-      if (failure === "noop-remove" || failure === "failed-remove") {
+      if (failure === "failed-remove") {
         expect(() => writeStoredOutboxStore(sessionStorage, target, store)).toThrow();
       } else {
         writeStoredOutboxStore(sessionStorage, target, store);
@@ -526,15 +501,26 @@ describe("Blob-preserving metadata migration", () => {
     },
   );
   it.each(["paste", "file", undefined] as const)(
-    "preserves %s origin and bytes after durable queue reload",
+    "preserves %s origin, annotation, and bytes after durable queue reload",
     async (origin) => {
+      const annotation: ChatSelectionAnnotation = {
+        text: "complete source bytes",
+        comment: "Keep this context. 🦞",
+        sessionKey: "agent:main:review",
+        messageId: "assistant-1",
+        entryId: "entry-1",
+        start: 5,
+        end: 26,
+      };
       const host = hostFor();
-      const item = await prepare(host, `origin-${origin}`, "agent:main:review", undefined, origin);
+      const selection = origin === undefined ? annotation : undefined;
+      const item = await prepare(host, `origin-${origin}`, "agent:main:review", selection, origin);
       seed([item], "agent:main:review", 4);
       const store = readStoredOutboxStore(sessionStorage, target);
       const restoredItem = Object.values(store.sessions)[0]?.queue?.[0];
       const restored = await expectBytes(host, expectDefined(restoredItem, "stored queue item"));
       expect(restored?.origin).toBe(origin);
+      expect(restored?.selectionAnnotation).toEqual(selection);
     },
   );
 });

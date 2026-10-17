@@ -51,7 +51,7 @@ export function createGatewayConnectionState(params: {
   // validate the live transport before publishing into a retired connection.
   const isConnectionActive = (connId: string) => {
     const client = clients.getByConnectionId(connId);
-    return Boolean(client && !client.invalidated);
+    return Boolean(client && !client.invalidated && !client.connectionSignal?.aborted);
   };
   const sessionEventSubscribers = createSessionEventSubscriberRegistry(
     isConnectionActive,
@@ -90,6 +90,9 @@ export function createGatewayConnectionState(params: {
               },
             }
           : undefined;
+        if (!prepared) {
+          return false;
+        }
         return canReceiveSessionEvent({
           cfg,
           policyConfig,
@@ -98,7 +101,7 @@ export function createGatewayConnectionState(params: {
           agentId,
           event,
           payload,
-          ...(prepared ? { prepared } : {}),
+          prepared,
         });
       } catch {
         return false;
@@ -109,9 +112,6 @@ export function createGatewayConnectionState(params: {
       if (!projection) {
         return undefined;
       }
-      let projectedAgentRuns: SessionRowProjection["state"]["rowContext"]["projectedAgentRuns"];
-      let registrations: (readonly [string, ChatAbortControllerEntry])[] = [];
-      let projectRun: ReturnType<typeof createVisibleActiveSessionRunProjector> | undefined;
       return (eventScope.prepareSessionProjection ?? prepareSessionEventProjection(projection))(
         event,
         payload,
@@ -136,36 +136,11 @@ export function createGatewayConnectionState(params: {
             return references;
           },
           forgetConnectionAncestors: (client) => ancestorReferences.delete(client),
-          getRunProjector: () => {
-            if (
-              !projectRun ||
-              registrations.length !== chatAbortControllers.size ||
-              // Compare copied fields: registrations can mutate in place between recipients.
-              registrations.some(([runId, previous]) => {
-                const current = chatAbortControllers.get(runId);
-                return (
-                  !current ||
-                  current.sessionKey !== previous.sessionKey ||
-                  current.sessionId !== previous.sessionId ||
-                  current.agentId !== previous.agentId ||
-                  current.projectSessionActive !== previous.projectSessionActive ||
-                  current.controlUiVisible !== previous.controlUiVisible
-                );
-              }) ||
-              projectedAgentRuns !== projection.state.rowContext.projectedAgentRuns
-            ) {
-              registrations = Array.from(chatAbortControllers, ([runId, entry]) => [
-                runId,
-                { ...entry },
-              ]);
-              projectedAgentRuns = projection.state.rowContext.projectedAgentRuns;
-              projectRun = createVisibleActiveSessionRunProjector(
-                { chatAbortControllers: new Map(registrations) },
-                projectedAgentRuns,
-              );
-            }
-            return projectRun;
-          },
+          createRunProjector: () =>
+            createVisibleActiveSessionRunProjector(
+              { chatAbortControllers },
+              projection.state.rowContext.projectedAgentRuns,
+            ),
         },
       );
     },
@@ -198,7 +173,7 @@ export function createGatewayConnectionState(params: {
   });
   const agentRunSeq = new Map<string, number>();
   const dedupe = new Map<string, import("./server-shared.js").DedupeEntry>();
-  const chatRunState = createChatRunState();
+  const chatRunState = createChatRunState(isConnectionActive);
   const chatRunRegistry = chatRunState.registry;
   const addChatRun = chatRunRegistry.add;
   const removeChatRun = chatRunRegistry.remove;
@@ -212,6 +187,9 @@ export function createGatewayConnectionState(params: {
       sessionRowProjection = projection;
       ancestorReferences = new WeakMap();
       const unsubscribe = sessionChanges.subscribeFacts((change) => {
+        if (!("all" in change) && change.scope === "acp") {
+          return;
+        }
         if ("all" in change) {
           ancestorReferences = new WeakMap();
         } else if (change.factsInvalidated || (change.facts && change.facts.kind !== "unchanged")) {

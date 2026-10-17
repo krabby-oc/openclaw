@@ -1,20 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import { publishSystemEventStoreResolver } from "../infra/system-event-ownership.js";
 import { resolveOpenClawAgentSqlitePath } from "../state/openclaw-agent-db.paths.js";
+import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
+import { recordSessionCreated } from "./session-created.js";
 import {
+  recordSessionCompacted,
   recordSessionGoalChanged,
   recordSessionHumanDirectMessage,
   recordSessionStateEventAsync,
-  recordSessionStateEvent,
+  recordSubagentSpawned,
 } from "./session-state-events.js";
 import type { SessionStateEventRow, SessionStateNotice } from "./session-state-events.kernel.js";
 
 const edge = vi.hoisted(() => {
   const phases: string[] = [];
   const context = {
-    identity: "captured-shared-state",
-    admission: { databasePath: "/synthetic/state.sqlite", assertCurrent: vi.fn() },
-  };
+    environment: { OPENCLAW_STATE_DIR: "/synthetic" },
+    admission: {
+      databasePath: "/synthetic/state.sqlite",
+      coordinationKey: "captured-shared-state",
+      identity: { key: "file:1:1", canonicalPath: "/synthetic/state.sqlite" },
+      assertCurrent: vi.fn(),
+    },
+  } satisfies OpenClawStateWorkerContext;
   const execute = vi.fn<(command: { type: string; input: unknown }) => Promise<unknown>>();
   return {
     phases,
@@ -35,8 +44,6 @@ const edge = vi.hoisted(() => {
     ),
     notice: vi.fn((_notice: unknown) => phases.push("notice")),
     warn: vi.fn(),
-    nativeRecord: vi.fn(() => ({ notices: [] })),
-    nativePrune: vi.fn(),
     forbidden: vi.fn((): never => {
       throw new Error("Session signal control crossed a native or process boundary");
     }),
@@ -64,7 +71,9 @@ vi.mock("../infra/node-sqlite.js", () => ({
   requireNodeSqlite: edge.forbidden,
   openNodeSqliteDatabase: edge.forbidden,
 }));
-vi.mock("../infra/kysely-sync.js", () => ({
+// Schema owners create query caches at import time; keep factories real and SQL calls forbidden.
+vi.mock("../infra/kysely-sync.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../infra/kysely-sync.js")>()),
   getNodeSqliteKysely: edge.forbidden,
   executeSqliteQuerySync: edge.forbidden,
   executeSqliteQueryTakeFirstSync: edge.forbidden,
@@ -81,21 +90,21 @@ vi.mock("../state/openclaw-state-db.js", () => ({
 }));
 vi.mock("../state/openclaw-state-worker-context.js", () => ({
   captureOpenClawStateWorkerContext: edge.capture,
+  captureOpenClawStateReadWorkerContext: edge.capture,
 }));
 vi.mock("../state/openclaw-state-worker-store.js", () => ({
   runOpenClawStateWorkerOperation: edge.run,
 }));
+// mock-isolation: Host-control proof forbids native SQL and substitutes only the worker result codec.
 vi.mock("./session-state-events.kernel.js", () => ({
-  recordSessionStateEventInDatabase: edge.nativeRecord,
   rowToSessionStateEvent: vi.fn(),
-  pruneSessionStateEventsInDatabase: edge.nativePrune,
 }));
 vi.mock("./session-state-notices.js", () => ({ enqueueSessionStateNotice: edge.notice }));
-vi.mock("./session-upstream-links.js", () => ({ deleteSessionUpstreamLink: vi.fn() }));
 
+const watcherStorePath = resolveOpenClawAgentSqlitePath({ agentId: "main" });
 const notice: SessionStateNotice = {
   watcherSessionKey: "agent:main:main",
-  watcherStorePath: resolveOpenClawAgentSqlitePath({ agentId: "main" }),
+  watcherStorePath,
   targetSessionKey: "agent:main:child",
   lastSeenSequence: 17,
   queueOnly: false,
@@ -114,7 +123,7 @@ const row: SessionStateEventRow = {
   summary: "human message",
   payload_json: null,
 };
-type Recorded = { row?: SessionStateEventRow; notices: SessionStateNotice[] };
+type Recorded = { rows: SessionStateEventRow[]; notices: SessionStateNotice[] };
 let now = 4_000_000;
 
 function goalChange() {
@@ -132,23 +141,25 @@ function goalChange() {
   });
 }
 
-function synchronousSibling() {
-  return recordSessionStateEvent({
+function recordSibling() {
+  return recordSessionStateEventAsync({
     sessionKey: "agent:main:sibling",
     agentId: "main",
-    kind: "compacted",
+    kind: "adopted",
     actorType: "system",
-    summary: "session compacted",
+    summary: "session adopted",
   });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   edge.phases.length = 0;
+  // Supply the accepted store without loading runtime config or native ownership metadata.
+  publishSystemEventStoreResolver(() => watcherStorePath);
   edge.capture.mockImplementation(() => edge.context);
   edge.execute.mockImplementation(async (command) => {
     edge.phases.push(command.type === "sessionState.prune" ? "prune" : "record");
-    return command.type === "sessionState.prune" ? undefined : { row, notices: [notice] };
+    return command.type === "sessionState.prune" ? undefined : { rows: [row], notices: [notice] };
   });
   edge.notice.mockImplementation(() => edge.phases.push("notice"));
   edge.warn.mockImplementation(() => undefined);
@@ -157,6 +168,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  publishSystemEventStoreResolver(undefined);
   expect(edge.forbidden).not.toHaveBeenCalled();
   vi.restoreAllMocks();
 });
@@ -214,7 +226,7 @@ describe("Session signal worker reconciliation", () => {
     expect(edge.nativeTransaction).not.toHaveBeenCalled();
     expect(settled).toBe(false);
     expect(edge.notice).not.toHaveBeenCalled();
-    recorded.resolve({ row, notices: [notice] });
+    recorded.resolve({ rows: [row], notices: [notice] });
     await pending;
     expect(edge.notice).toHaveBeenCalledWith(notice);
     expect(settled).toBe(true);
@@ -222,6 +234,7 @@ describe("Session signal worker reconciliation", () => {
 
   it("retains committed notices and pruning before producer settlement", async () => {
     const recorded = createDeferred<Recorded>();
+    const recordStarted = createDeferred();
     const pruning = createDeferred();
     const pruneStarted = createDeferred();
     edge.execute.mockImplementation(async (command) => {
@@ -231,12 +244,14 @@ describe("Session signal worker reconciliation", () => {
         return pruning.promise;
       }
       edge.phases.push("record");
+      recordStarted.resolve();
       return recorded.promise;
     });
     let returned = false;
     const pending = goalChange().then(() => {
       returned = true;
     });
+    await recordStarted.promise;
     expect(edge.notice).not.toHaveBeenCalled();
     expect(returned).toBe(false);
     expect(edge.execute).toHaveBeenCalledWith({
@@ -245,20 +260,22 @@ describe("Session signal worker reconciliation", () => {
         now,
         onlyIfWatched: undefined,
         expectedUpstream: undefined,
-        event: {
-          sessionKey: "global",
-          sessionId: "original-session",
-          agentId: "ops",
-          kind: "goal_changed",
-          actorType: "human",
-          actorId: "operator",
-          summary: "goal complete",
-          watcherSessionKeys: ["agent:main:main"],
-          watcherStorePaths: { "agent:main:main": notice.watcherStorePath },
-        },
+        events: [
+          {
+            sessionKey: "global",
+            sessionId: "original-session",
+            agentId: "ops",
+            kind: "goal_changed",
+            actorType: "human",
+            actorId: "operator",
+            summary: "goal complete",
+            watcherSessionKeys: ["agent:main:main"],
+            watcherStorePaths: { "agent:main:main": notice.watcherStorePath },
+          },
+        ],
       },
     });
-    recorded.resolve({ row, notices: [notice] });
+    recorded.resolve({ rows: [row], notices: [notice] });
     await pruneStarted.promise;
     expect(edge.phases).toEqual(["record", "notice", "prune"]);
     expect(returned).toBe(false);
@@ -270,7 +287,7 @@ describe("Session signal worker reconciliation", () => {
     expect(returned).toBe(true);
   });
 
-  it.each(["capture", "unknown-outcome", "notice", "prune", "logger"] as const)(
+  it.each(["capture", "notice", "prune"] as const)(
     "preserves the originating committed result after %s failure without replay",
     async (failure) => {
       const error = Object.assign(new Error("Synthetic event failure"), {
@@ -289,15 +306,8 @@ describe("Session signal worker reconciliation", () => {
           if (command.type === "sessionState.prune") {
             throw error;
           }
-          return { row, notices: [notice] };
+          return { rows: [row], notices: [notice] };
         });
-      } else {
-        edge.execute.mockRejectedValueOnce(error);
-        if (failure === "logger") {
-          edge.warn.mockImplementationOnce(() => {
-            throw new Error("Synthetic diagnostic sink failure");
-          });
-        }
       }
       await expect(goalChange()).resolves.toBeUndefined();
       expect(
@@ -311,17 +321,22 @@ describe("Session signal worker reconciliation", () => {
   it.each([false, true])("releases a pending prune reservation after failure=%s", async (fail) => {
     const pruning = createDeferred();
     const pruneStarted = createDeferred();
+    const nextPruneStarted = createDeferred();
+    let prunes = 0;
     edge.execute.mockImplementation(async (command) => {
       if (command.type === "sessionState.prune") {
+        if (++prunes === 2) {
+          nextPruneStarted.resolve();
+          return;
+        }
         pruneStarted.resolve();
         return pruning.promise;
       }
-      return { row, notices: [] };
+      return { rows: [row], notices: [] };
     });
     const pending = goalChange();
     await pruneStarted.promise;
-    synchronousSibling();
-    expect(edge.nativePrune).not.toHaveBeenCalled();
+    await recordSibling();
     if (fail) {
       pruning.reject(new Error("Synthetic prune refusal"));
     } else {
@@ -332,7 +347,49 @@ describe("Session signal worker reconciliation", () => {
       now += 4_000_000;
       vi.mocked(Date.now).mockReturnValue(now);
     }
-    synchronousSibling();
-    expect(edge.nativePrune).toHaveBeenCalledExactlyOnceWith(expect.anything(), now);
+    const next = recordSibling();
+    await nextPruneStarted.promise;
+    await next;
+    expect(
+      edge.execute.mock.calls.filter(([command]) => command.type === "sessionState.prune"),
+    ).toHaveLength(2);
+  });
+
+  it.each([
+    [
+      "creation",
+      () =>
+        recordSessionCreated(
+          {},
+          {
+            sessionKey: "agent:main:main",
+            entry: { sessionId: "created", updatedAt: 1, createdActor: { type: "system" } },
+          },
+        ),
+    ],
+    [
+      "compaction",
+      () => recordSessionCompacted({ sessionKey: "agent:main:child", operationId: "compact" }),
+    ],
+    [
+      "spawn",
+      () =>
+        recordSubagentSpawned({
+          childSessionKey: "agent:main:child",
+          childRunId: "spawn",
+          requesterSessionKey: "agent:main:main",
+          agentId: "main",
+        }),
+    ],
+  ] as const)("settles %s once after an unknown signal outcome", async (_name, record) => {
+    edge.execute.mockRejectedValueOnce(
+      Object.assign(new Error("Synthetic lost signal reply"), {
+        code: "outcome-unknown",
+      }),
+    );
+    await expect(record()).resolves.toBeUndefined();
+    expect(edge.execute).toHaveBeenCalledTimes(1);
+    expect(edge.nativeTransaction).not.toHaveBeenCalled();
+    expect(edge.notice).not.toHaveBeenCalled();
   });
 });

@@ -10,7 +10,11 @@ import {
 } from "../../process/gateway-work-admission.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { sleep } from "../../utils/sleep.js";
-import { createChannelIngressDrain, type ChannelIngressDrain } from "./ingress-drain.js";
+import {
+  createChannelIngressDrain,
+  DEFAULT_INGRESS_START_LIMIT,
+  type ChannelIngressDrain,
+} from "./ingress-drain.js";
 import { createAdmissionClaimLock, waitForPending } from "./ingress-monitor-tasks.js";
 import type {
   ChannelIngressMonitorDeliveryResult,
@@ -66,10 +70,11 @@ export function createChannelIngressMonitor<TRaw, TBody, TStoredPayload, TMetada
     : shutdown.signal;
   const activeDeliveries = new Set<Promise<unknown>>();
   const activeInspections = new Set<Promise<unknown>>();
+  const startLimit = options.drain?.startLimit ?? DEFAULT_INGRESS_START_LIMIT;
   // Released deferrals lend start slots while stop still joins their callbacks.
   // Bound open callbacks to startLimit + this budget; held lanes cannot lend slots.
   const deferredStartCapacityLimit =
-    options.drain?.deferredLaneOccupancy === "release" ? (options.drain.startLimit ?? 0) : 0;
+    options.drain?.deferredLaneOccupancy === "release" ? startLimit : 0;
   let deferredStartCapacity = 0;
   const deferredClaims = new Set<Promise<void>>();
   type Queue = ChannelIngressQueue<TStoredPayload, TMetadata>;
@@ -250,9 +255,11 @@ export function createChannelIngressMonitor<TRaw, TBody, TStoredPayload, TMetada
               deferredClaims.add(deferredClaim.promise);
             }
           };
-          const settleDeferredLifecycle = async (settle: () => void | Promise<void>) => {
+          const settleLifecycle = async (settle: () => void | Promise<void>, deferred = true) => {
             handedOff = true;
-            deferredHandoff = true;
+            if (deferred) {
+              deferredHandoff = true;
+            }
             // Settlement can start before delivery returns its deferred handoff.
             trackDeferredClaim();
             try {
@@ -265,16 +272,7 @@ export function createChannelIngressMonitor<TRaw, TBody, TStoredPayload, TMetada
           const wrappedLifecycle: ChannelIngressMonitorLifecycle = {
             ...lifecycle,
             admission: "exclusive",
-            onAdopted: async () => {
-              handedOff = true;
-              trackDeferredClaim();
-              try {
-                await lifecycle.onAdopted();
-                requestDrain();
-              } finally {
-                settleDeferredClaim();
-              }
-            },
+            onAdopted: () => settleLifecycle(() => lifecycle.onAdopted(), false),
             onDeferred: () => {
               handedOff = true;
               deferredHandoff = true;
@@ -288,9 +286,9 @@ export function createChannelIngressMonitor<TRaw, TBody, TStoredPayload, TMetada
               trackDeferredClaim();
               lifecycle.onAdoptionFinalizing();
             },
-            onFailed: (error) => settleDeferredLifecycle(() => lifecycle.onFailed?.(error)),
-            onCancelled: () => settleDeferredLifecycle(() => lifecycle.onCancelled?.()),
-            onAbandoned: () => settleDeferredLifecycle(() => lifecycle.onAbandoned()),
+            onFailed: (error) => settleLifecycle(() => lifecycle.onFailed?.(error)),
+            onCancelled: () => settleLifecycle(() => lifecycle.onCancelled?.()),
+            onAbandoned: () => settleLifecycle(() => lifecycle.onAbandoned()),
           };
 
           // Adoption can complete before delivery returns; track both lifetimes so stop
@@ -327,6 +325,11 @@ export function createChannelIngressMonitor<TRaw, TBody, TStoredPayload, TMetada
             }
             throw error;
           }
+          if (result?.kind === "transferred" || result?.kind === "pending") {
+            // Receipt transfer owns completion, including after cancellation.
+            settleDeferredClaim();
+            return result;
+          }
           if (result?.kind === "failed-retryable") {
             if (deferredHandoff && deferredClaim && !deferredClaimSettled) {
               await wrappedLifecycle.onFailed?.(result.error);
@@ -335,19 +338,13 @@ export function createChannelIngressMonitor<TRaw, TBody, TStoredPayload, TMetada
             return result;
           }
           // Preserve terminal/handoff outcomes under abort: releasing them could replay delivery.
-          if (result?.kind === "completed") {
-            // The deferred owner must settle its claim even after a conflicting terminal return.
-            if (deferredHandoff) {
-              return { kind: "deferred" };
-            }
+          if (result?.kind === "completed" && !deferredHandoff) {
             return result;
           }
-          if (result?.kind === "deferred") {
-            if (!deferredHandoff) {
-              wrappedLifecycle.onDeferred();
-            }
-            return { kind: "deferred" };
+          if (result?.kind === "deferred" && !deferredHandoff) {
+            wrappedLifecycle.onDeferred();
           }
+          // The deferred owner must settle its claim even after a conflicting terminal return.
           if (deferredHandoff) {
             return { kind: "deferred" };
           }
@@ -428,9 +425,7 @@ export function createChannelIngressMonitor<TRaw, TBody, TStoredPayload, TMetada
               !running ||
               isAborted() ||
               getGatewaySuspendAdmissionPhase() !== "accepting" ||
-              (options.drain?.startLimit !== undefined &&
-                activeDeliveries.size + activeInspections.size - deferredStartCapacity >=
-                  options.drain.startLimit),
+              activeDeliveries.size + activeInspections.size - deferredStartCapacity >= startLimit,
           }),
         );
         if (waitForDeliveryIdleBeforeRepump) {
