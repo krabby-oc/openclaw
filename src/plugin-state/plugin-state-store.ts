@@ -160,9 +160,9 @@ function createKeyedStoreForPluginId<T>(
         moduleSource,
       );
     },
-    /** @deprecated Use observe and compareAndApply; final compatibility day: 2026-12-31. */
+    /** @deprecated Use observe and compareAndApply; final compatibility day: 2026-12-31. Removal in the first January 2027 stable release. */
     update: async (...args) => getLegacyStore().update(...args),
-    /** @deprecated Use observe and compareAndApply; final compatibility day: 2026-12-31. */
+    /** @deprecated Use observe and compareAndApply; final compatibility day: 2026-12-31. Removal in the first January 2027 stable release. */
     deleteIf: async (...args) => getLegacyStore().deleteIf(...args),
   };
   return bindPluginStateNativeBindingStore(

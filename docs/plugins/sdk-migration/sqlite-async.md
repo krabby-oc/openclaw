@@ -297,16 +297,19 @@ and must implement the V2 asynchronous and current-owner contracts.
 
 Native harnesses must migrate ownership, not just rename a getter:
 
-| Before                                        | After                                                                                              |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `captureNativeSessionGenerationAuthority`     | Await `prepareNativeSessionGenerationAuthority`, or use the current retained preparation API below |
-| `resolveNativeSessionBinding`                 | Await `resolvePreparedNativeSessionBinding` and release its capture                                |
-| `reclaimNativeSessionGeneration`              | Prepare authority, then `await reclaimNativeSessionGenerationWithAuthority(...)`                   |
-| `NativeSessionGenerationOperations`           | `NativeSessionGenerationOperationsV2`                                                              |
-| `createNativeSessionBindingLifecycle`         | `createNativeSessionBindingLifecycleV2`                                                            |
-| `NativeSessionBindingStateStore`              | `NativeSessionBindingStateStoreV2`                                                                 |
-| `resolveNativeSessionBindingWithAuthority`    | Await `resolvePreparedNativeSessionBinding` and release its capture                                |
-| `AgentHarness.resolveSessionRuntimeOwnership` | `resolveSessionRuntimeOwnershipAsync`                                                              |
+| Before                                        | After                                                                            |
+| --------------------------------------------- | -------------------------------------------------------------------------------- |
+| `captureNativeSessionGenerationAuthority`     | Await `retainNativeSessionGenerationAuthority` and release its capture           |
+| `prepareNativeSessionGenerationAuthority`     | Await `retainNativeSessionGenerationAuthority` and release its capture           |
+| `createNativeSessionBindingAuthority`         | Retain prepared lineage, or use `createNativeSessionBindingScope`                |
+| `combineNativeSessionBindingAuthority`        | `combinePreparedNativeSessionBindingAuthority`                                   |
+| `resolveNativeSessionBinding`                 | Await `resolvePreparedNativeSessionBinding` and release its capture              |
+| `reclaimNativeSessionGeneration`              | Prepare authority, then `await reclaimNativeSessionGenerationWithAuthority(...)` |
+| `NativeSessionGenerationOperations`           | `NativeSessionGenerationOperationsV2`                                            |
+| `createNativeSessionBindingLifecycle`         | `createNativeSessionBindingLifecycleV2`                                          |
+| `NativeSessionBindingStateStore`              | `NativeSessionBindingStateStoreV2`                                               |
+| `resolveNativeSessionBindingWithAuthority`    | Await `resolvePreparedNativeSessionBinding` and release its capture              |
+| `AgentHarness.resolveSessionRuntimeOwnership` | `resolveSessionRuntimeOwnershipAsync`                                            |
 
 For new harness code, follow [native session lineage](/plugins/sdk-migration#native-session-lineage):
 await `resolvePreparedNativeSessionBinding` or
@@ -439,11 +442,13 @@ for completion semantics and types.
 | `loadArchivedSessions`                                                                                                                                    | `await loadArchivedSessionsAsync(...)`                                                            |
 | `resolveMemorySessionTargets`                                                                                                                             | `await resolveMemorySessionTargetsAsync(...)`                                                     |
 | `loadMemorySessionMetadata`                                                                                                                               | `await loadMemorySessionMetadataAsync(...)`, or `loadMemorySessionMetadataBatchAsync` for a batch |
+| `MemorySearchManager.status`                                                                                                                              | Await `manager.statusAsync(...)`; use `readMemorySearchManagerStatus` for legacy manager types    |
 | `readSessionTranscriptCatalogTitle`                                                                                                                       | `await readSessionTranscriptCatalogTitleAsync(...)`                                               |
 | `createSessionCatalogSourceActorProjector`                                                                                                                | `await prepareSessionCatalogSourceActorProjector(...)`                                            |
 | `createSessionCatalogGitHubLinker`                                                                                                                        | `await prepareSessionCatalogGitHubLinker(...)`                                                    |
-| `validateCodexSessionTranscriptReadAdmission`                                                                                                             | `await validateCodexSessionTranscriptReadAdmissionAsync(...)`                                     |
-| `validateCodexSessionTranscriptContextVersion`                                                                                                            | `await validateCodexSessionTranscriptContextVersionAsync(...)`                                    |
+| `validateCodexSessionTranscriptReadAdmission`                                                                                                             | Use `createCodexSessionContextReader` with the captured admission                                 |
+| `validateCodexSessionTranscriptContextVersion`                                                                                                            | Use `createCodexSessionContextReader` with a prepared current source                              |
+| `readCodexSessionContext`                                                                                                                                 | Await the reader returned by `createCodexSessionContextReader`                                    |
 
 ```ts
 // Before
@@ -465,6 +470,24 @@ and skips preparation. Keep externally visible side effects out of preparation.
 The new write scope does not promise the old callback's native transaction view
 or roll back already committed appends. See [locked transcript
 preparation](/plugins/sdk-migration/how-to-migrate#await-locked-transcript-preparation).
+
+For Codex context reads, the supplied owner retains the captured admission,
+source validation, and cleanup for the whole read. Do not add separate validator
+calls before invoking its reader:
+
+```ts
+// Before
+const context = readCodexSessionContext(target, projectContext, admission);
+// After: use the owner prepared for this transcript read.
+const readContext = createCodexSessionContextReader(owner);
+const context = await readContext(target, projectContext);
+```
+
+Memory manager implementations should provide `statusAsync` for storage-backed
+diagnostics. It remains optional on the legacy manager interface. Consumers that
+accept third-party managers can await `readMemorySearchManagerStatus(manager)`;
+the helper selects `statusAsync` when available and otherwise uses the retained
+`status` contract. An async failure is not retried synchronously.
 
 ## Reply, observer, and harness preparation
 
