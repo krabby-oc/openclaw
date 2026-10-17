@@ -33,6 +33,8 @@ function indexedDbFactory(): IDBFactory | null {
   }
 }
 
+// IndexedDB requests own their one-shot listeners; database listeners end when callers close it.
+// Persistence stays independent of any Solid view's lifetime.
 function openIndexedDb(factory: IDBFactory): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = factory.open(CHAT_SNAPSHOT_DB_NAME, CHAT_SNAPSHOT_DB_VERSION);
@@ -169,16 +171,14 @@ export async function deleteSessionSnapshotEntries(
     return;
   }
   try {
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       const names = [
         CHAT_SNAPSHOT_STORE_NAME,
         CHAT_SNAPSHOT_METADATA_STORE_NAME,
         SIDEBAR_SNAPSHOT_STORE_NAME,
       ];
       const transaction = database.transaction(names, "readwrite");
-      for (const event of ["complete", "error", "abort"]) {
-        transaction.addEventListener(event, () => resolve(), byPrefix ? { once: true } : undefined);
-      }
+      void transactionComplete(transaction).then(resolve, reject);
       for (const name of names) {
         const store = transaction.objectStore(name);
         if (!byPrefix && name !== SIDEBAR_SNAPSHOT_STORE_NAME) {
@@ -204,7 +204,7 @@ export async function deleteSessionSnapshotEntries(
       }
     });
   } catch (error) {
-    // Scope clearing reports setup failures; single-record invalidation is best effort.
+    // Scope clearing reports failures; single-record invalidation is best effort.
     if (byPrefix) {
       throw error;
     }

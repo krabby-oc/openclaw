@@ -21,13 +21,22 @@ The Gateway serves static files from `dist/control-ui`:
 pnpm ui:build
 ```
 
+Full package builds include matching bundled native plugin assets, including
+Workboard, in the UI distribution. These assets can load from the UI origin when
+the Gateway uses another origin or authenticated HTTP. The running plugin must
+match the packaged version and browser build; custom plugins and source overrides
+retain the Gateway asset route. A standalone UI build without packaged plugin
+artifacts also retains that route.
+
 The build's performance report keeps the initial-entry JavaScript budget separate
 from the complete chat and new-session boot totals. Those route totals include
 the entry assets and the route's measured immediate dynamic imports, counting
 each asset once even when both preload lists reference it. Moving an existing
 boot import into the first request wave therefore remains visible in the byte
-accounting. The initial-entry ceilings and baseline are unchanged; route byte totals
-are reported without introducing a higher limit. `--base-dist` on
+accounting. Initial-entry JavaScript is capped at 342,000 B gzip with one startup
+CSS request; route byte totals are reported without introducing a higher limit.
+JSON5 remains in its own lazy chunk so snapshot validation cannot pull the raw
+configuration parser into chat boot. `--base-dist` on
 `scripts/check-control-ui-performance.mts` compares route bytes and requests when
 both builds contain route preload templates. Older builds report that comparison
 as unavailable, so use a cold-load network capture to compare their complete boot

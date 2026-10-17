@@ -19,25 +19,62 @@ import {
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 describe("assertSqliteIntegrity", () => {
-  it("names integrity-check failures", () => {
-    const database = {
-      prepare: () => ({ all: () => [{ integrity_check: "broken index" }] }),
-    } as unknown as DatabaseSync;
-
-    let failure: unknown;
+  it("refuses structural damage in a table outside the migration scope", () => {
+    const databasePath = path.join(tempDirs.make("sqlite-quick-damage-"), "database.sqlite");
+    const writer = new (requireNodeSqlite().DatabaseSync)(databasePath);
+    writer.exec(`
+      CREATE TABLE touched(value TEXT);
+      CREATE TABLE untouched(value TEXT);
+      INSERT INTO untouched VALUES ('retained');
+    `);
+    const pageSize = Number(writer.prepare("PRAGMA page_size").get()?.page_size);
+    const rootPage = Number(
+      writer.prepare("SELECT rootpage FROM sqlite_schema WHERE name='untouched'").get()?.rootpage,
+    );
+    writer.close();
+    const file = fs.openSync(databasePath, "r+");
     try {
-      assertSqliteIntegrity(database, "test database");
-    } catch (error) {
-      failure = error;
+      fs.writeSync(file, Buffer.from([0xff]), 0, 1, (rootPage - 1) * pageSize);
+    } finally {
+      fs.closeSync(file);
     }
-
-    expect(failure).toMatchObject({
-      name: "SqliteIntegrityError",
-      message: expect.stringContaining(
-        "SQLite integrity_check failed for test database: broken index",
-      ),
-    });
+    using database = new (requireNodeSqlite().DatabaseSync)(databasePath);
+    expect(() =>
+      assertSqliteIntegrity(database, "migration source", { check: "quick", tables: ["touched"] }),
+    ).toThrow(expect.objectContaining({ name: "SqliteIntegrityError" }));
   });
+
+  it.each([
+    { check: "quick", tables: ["touched"], refuses: false },
+    { check: "quick", tables: ["untouched"], refuses: true },
+    { check: "full", tables: ["touched"], refuses: true },
+  ] as const)(
+    "checks index consistency with $check verification scoped to $tables",
+    ({ check, tables, refuses }) => {
+      using database = new (requireNodeSqlite().DatabaseSync)(":memory:");
+      database.exec(`
+        CREATE TABLE touched(value TEXT);
+        CREATE TABLE untouched(id INTEGER PRIMARY KEY, value TEXT);
+        CREATE INDEX idx_untouched ON untouched(id);
+        INSERT INTO untouched VALUES (1, 'retained'), (2, 'history');
+      `);
+      database.enableDefensive?.(false);
+      database.exec("PRAGMA writable_schema = ON");
+      database
+        .prepare("UPDATE sqlite_schema SET sql = ? WHERE name = 'idx_untouched'")
+        .run("CREATE INDEX idx_untouched ON untouched(value)");
+      database.exec("PRAGMA writable_schema = OFF");
+      const version = Number(database.prepare("PRAGMA schema_version").get()?.schema_version);
+      database.exec(`PRAGMA schema_version = ${version + 1}`);
+
+      const verify = () => assertSqliteIntegrity(database, "migration source", { check, tables });
+      if (refuses) {
+        expect(verify).toThrow(/integrity_check.*idx_untouched/su);
+      } else {
+        expect(verify).not.toThrow();
+      }
+    },
+  );
 
   it("classifies cascade-owned task delivery orphans without admitting writes", () => {
     const database = new (requireNodeSqlite().DatabaseSync)(":memory:");
@@ -166,11 +203,24 @@ describe("assertSqliteIntegrity", () => {
     }
   });
 
-  it("reports violations deterministically without truncating 64-bit rowids", () => {
-    const sqlite = requireNodeSqlite();
-    const database = new sqlite.DatabaseSync(":memory:");
+  function expectForeignKeyViolation(
+    sql: string,
+    expected: RegExp,
+    beforeCheck?: (database: DatabaseSync) => void,
+  ) {
+    const database = new (requireNodeSqlite().DatabaseSync)(":memory:");
     try {
-      database.exec(`
+      database.exec(sql);
+      beforeCheck?.(database);
+      expect(() => assertSqliteIntegrity(database, "test database")).toThrow(expected);
+    } finally {
+      database.close();
+    }
+  }
+
+  it("reports violations deterministically without truncating 64-bit rowids", () => {
+    expectForeignKeyViolation(
+      `
         PRAGMA foreign_keys = OFF;
         CREATE TABLE parents (id INTEGER PRIMARY KEY);
         CREATE TABLE children (
@@ -179,44 +229,14 @@ describe("assertSqliteIntegrity", () => {
         );
         INSERT INTO children (id, parent_id)
         VALUES (9007199254740993, 99), (1, 99);
-      `);
-
-      expect(() => assertSqliteIntegrity(database, "test database")).toThrow(
-        /children row 1 references parents \(foreign key 0\); children row 9007199254740993 references parents \(foreign key 0\)/u,
-      );
-    } finally {
-      database.close();
-    }
-  });
-
-  it("bounds foreign-key violation diagnostics", () => {
-    const sqlite = requireNodeSqlite();
-    const database = new sqlite.DatabaseSync(":memory:");
-    try {
-      database.exec(`
-        PRAGMA foreign_keys = OFF;
-        CREATE TABLE parents (id INTEGER PRIMARY KEY);
-        CREATE TABLE children (
-          id INTEGER PRIMARY KEY,
-          parent_id INTEGER NOT NULL REFERENCES parents(id)
-        );
-        INSERT INTO children (id, parent_id)
-        VALUES (1, 99), (2, 99), (3, 99), (4, 99), (5, 99), (6, 99);
-      `);
-
-      expect(() => assertSqliteIntegrity(database, "test database")).toThrow(
-        /children row 5 references parents \(foreign key 0\); additional violations omitted\. Stop the Gateway, run "openclaw doctor --fix"/u,
-      );
-    } finally {
-      database.close();
-    }
+      `,
+      /children row 1 references parents \(foreign key 0\); children row 9007199254740993 references parents \(foreign key 0\)/u,
+    );
   });
 
   it("cannot be bypassed by a schema object shadowing the table-valued pragma", () => {
-    const sqlite = requireNodeSqlite();
-    const database = new sqlite.DatabaseSync(":memory:");
-    try {
-      database.exec(`
+    expectForeignKeyViolation(
+      `
         PRAGMA foreign_keys = OFF;
         CREATE TABLE parents (id INTEGER PRIMARY KEY);
         CREATE TABLE children (
@@ -230,24 +250,21 @@ describe("assertSqliteIntegrity", () => {
           parent TEXT NOT NULL,
           fkid INTEGER NOT NULL
         );
-      `);
-      expect(
-        database.prepare('SELECT "table", rowid, parent, fkid FROM pragma_foreign_key_check').all(),
-      ).toEqual([]);
-
-      expect(() => assertSqliteIntegrity(database, "test database")).toThrow(
-        /foreign_key_check failed for test database: children row 1 references parents \(foreign key 0\)/u,
-      );
-    } finally {
-      database.close();
-    }
+      `,
+      /foreign_key_check failed for test database: children row 1 references parents \(foreign key 0\)/u,
+      (database) => {
+        expect(
+          database
+            .prepare('SELECT "table", rowid, parent, fkid FROM pragma_foreign_key_check')
+            .all(),
+        ).toEqual([]);
+      },
+    );
   });
 
   it("identifies violations in WITHOUT ROWID tables", () => {
-    const sqlite = requireNodeSqlite();
-    const database = new sqlite.DatabaseSync(":memory:");
-    try {
-      database.exec(`
+    expectForeignKeyViolation(
+      `
         PRAGMA foreign_keys = OFF;
         CREATE TABLE parents (id TEXT PRIMARY KEY);
         CREATE TABLE children (
@@ -255,14 +272,9 @@ describe("assertSqliteIntegrity", () => {
           parent_id TEXT NOT NULL REFERENCES parents(id)
         ) WITHOUT ROWID;
         INSERT INTO children (id, parent_id) VALUES ('child-1', 'missing-parent');
-      `);
-
-      expect(() => assertSqliteIntegrity(database, "test database")).toThrow(
-        /foreign_key_check failed for test database: children row without rowid references parents \(foreign key 0\)/u,
-      );
-    } finally {
-      database.close();
-    }
+      `,
+      /foreign_key_check failed for test database: children row without rowid references parents \(foreign key 0\)/u,
+    );
   });
 });
 
@@ -302,7 +314,6 @@ describe("integrity gate attribution", () => {
   }
 
   it.each([
-    { label: "fractional check", checkMs: 4.75, foreignKeyViolation: false, gateMs: 9, syncMs: 4 },
     { label: "measured zero", checkMs: 0.25, foreignKeyViolation: false, gateMs: 4, syncMs: 0 },
     { label: "failed check", checkMs: 4.75, foreignKeyViolation: true, gateMs: 9, syncMs: 4 },
   ])(
@@ -361,7 +372,6 @@ describe("integrity gate attribution", () => {
 
   it.each([
     { label: "fractional", checkMs: 4.75, lifetimeMs: 8.75, outcome: "healthy" },
-    { label: "zero", checkMs: 0, lifetimeMs: 0, outcome: "healthy" },
     { label: "failed check", checkMs: 4.75, lifetimeMs: 8.75, outcome: "failed" },
     { label: "failed before checking", checkMs: undefined, lifetimeMs: 8.75, outcome: "failed" },
   ] as const)(

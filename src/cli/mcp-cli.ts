@@ -24,6 +24,7 @@ import {
 } from "../agents/mcp-oauth.js";
 import { resolveMcpTransportConfig } from "../agents/mcp-transport-config.js";
 import { parseConfigValue } from "../auto-reply/reply/config-value.js";
+import { renderEnvTemplateToken, scanEnvTemplateTokens } from "../config/env-substitution.js";
 import { listConfiguredMcpServers } from "../config/mcp-config.js";
 import type { McpCodexToolApprovalMode } from "../config/types.mcp.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -117,23 +118,15 @@ type McpServerControlOptions = {
   clientCert?: string;
   clientKey?: string;
   probe?: boolean;
+  clearTools?: boolean;
+  clearTimeouts?: boolean;
+  clearAuth?: boolean;
+  clearTls?: boolean;
 };
 
 function parseCsvList(value: string | undefined): string[] | undefined {
   const entries = normalizeCsvOrLooseStringList(value);
   return entries.length > 0 ? entries : undefined;
-}
-
-function applyMcpToolFilter(server: Record<string, unknown>, opts: McpServerControlOptions): void {
-  const include = parseCsvList(opts.include);
-  const exclude = parseCsvList(opts.exclude);
-  if (include || exclude) {
-    server.toolFilter = {
-      ...asRecord(server.toolFilter),
-      ...(include ? { include } : {}),
-      ...(exclude ? { exclude } : {}),
-    };
-  }
 }
 
 function parseKeyValueEntries(values: readonly string[] | undefined, label: string) {
@@ -172,10 +165,25 @@ function setOptionalField(target: Record<string, unknown>, key: string, value: u
   }
 }
 
-function applyMcpTimeoutOptions(
+function applyMcpServerControls(
   server: Record<string, unknown>,
   opts: McpServerControlOptions,
 ): void {
+  const include = parseCsvList(opts.include);
+  const exclude = parseCsvList(opts.exclude);
+  if (opts.clearTools) {
+    delete server.toolFilter;
+  } else if (include || exclude) {
+    server.toolFilter = {
+      ...asRecord(server.toolFilter),
+      ...(include ? { include } : {}),
+      ...(exclude ? { exclude } : {}),
+    };
+  }
+  if (opts.clearTimeouts) {
+    delete server.requestTimeoutMs;
+    delete server.connectionTimeoutMs;
+  }
   for (const [option, field, label] of [
     ["timeout", "requestTimeoutMs", "--timeout"],
     ["connectTimeout", "connectionTimeoutMs", "--connect-timeout"],
@@ -190,12 +198,26 @@ function applyMcpTimeoutOptions(
     }
     server[field] = seconds * 1_000;
   }
+  if (opts.parallel === true) {
+    server.supportsParallelToolCalls = true;
+  } else if (opts.parallel === false) {
+    delete server.supportsParallelToolCalls;
+    delete server.supports_parallel_tool_calls;
+  }
+  const approvalMode = parseMcpApprovalModeOption(opts.approval);
+  if (approvalMode) {
+    server.codex = { ...asRecord(server.codex), defaultToolsApprovalMode: approvalMode };
+  }
 }
 
-function applyMcpOAuthOptions(
+function applyMcpHttpControls(
   server: Record<string, unknown>,
   opts: McpServerControlOptions,
 ): void {
+  if (opts.clearAuth) {
+    delete server.auth;
+    delete server.oauth;
+  }
   const auth = normalizeLowercaseStringOrEmpty(normalizeStringifiedOptionalString(opts.auth) ?? "");
   if (auth && auth !== "oauth") {
     fail('Invalid --auth value. Use "oauth".');
@@ -217,9 +239,18 @@ function applyMcpOAuthOptions(
   if (Object.keys(oauth).length > 0) {
     server.oauth = { ...asRecord(server.oauth), ...oauth };
   }
-}
-
-function applyMcpTlsOptions(server: Record<string, unknown>, opts: McpServerControlOptions): void {
+  if (opts.clearTls) {
+    for (const field of [
+      "sslVerify",
+      "ssl_verify",
+      "clientCert",
+      "client_cert",
+      "clientKey",
+      "client_key",
+    ]) {
+      delete server[field];
+    }
+  }
   if (opts.sslVerify !== undefined) {
     const sslVerify = normalizeLowercaseStringOrEmpty(opts.sslVerify);
     if (sslVerify !== "true" && sslVerify !== "false") {
@@ -287,7 +318,20 @@ function hasSensitiveKey(name: string): boolean {
 }
 
 function hasLiteralSensitiveValue(value: unknown): boolean {
-  return typeof value === "string" && value.trim().length > 0 && !value.trim().startsWith("$");
+  if (typeof value !== "string" || !value.trim()) {
+    return false;
+  }
+  const tokens = scanEnvTemplateTokens(value);
+  let literal = value;
+  for (const token of tokens) {
+    if (token.kind === "escaped" || token.defaultValue?.trim()) {
+      return true;
+    }
+    literal = literal.replaceAll(renderEnvTemplateToken(token), "");
+  }
+  return (
+    tokens.length === 0 || (literal.trim().length > 0 && !/^(Bearer|Basic)$/i.test(literal.trim()))
+  );
 }
 
 function resolveConfiguredPath(filePath: string, cwd: unknown): string {
@@ -361,6 +405,7 @@ async function commandExists(
 async function collectMcpDoctorIssues(params: {
   name: string;
   server: Record<string, unknown>;
+  authoredServer?: Record<string, unknown>;
   probe: boolean;
   config: OpenClawConfig;
 }): Promise<McpDoctorIssue[]> {
@@ -425,8 +470,8 @@ async function collectMcpDoctorIssues(params: {
     }
   }
   for (const [field, values] of [
-    ["headers", asRecord(server.headers)],
-    ["env", asRecord(server.env)],
+    ["headers", asRecord(params.authoredServer?.headers)],
+    ["env", asRecord(params.authoredServer?.env)],
   ] as const) {
     for (const [key, value] of Object.entries(values ?? {})) {
       if (hasSensitiveKey(key) && hasLiteralSensitiveValue(value)) {
@@ -898,6 +943,7 @@ export function registerMcpCli(program: Command) {
             const issues = await collectMcpDoctorIssues({
               name: serverName,
               server,
+              authoredServer: loaded.authoredConfig?.mcp?.servers?.[serverName],
               config: loaded.config,
               probe: Boolean(opts.probe),
             });
@@ -1014,21 +1060,12 @@ export function registerMcpCli(program: Command) {
           server.url = url;
           setOptionalField(server, "transport", normalizeStringifiedOptionalString(opts.transport));
           setOptionalField(server, "headers", parseKeyValueEntries(opts.header, "--header"));
-          applyMcpOAuthOptions(server, opts);
-          applyMcpTlsOptions(server, opts);
+          applyMcpHttpControls(server, opts);
         }
         if (opts.disabled) {
           server.enabled = false;
         }
-        if (opts.parallel) {
-          server.supportsParallelToolCalls = true;
-        }
-        const approvalMode = parseMcpApprovalModeOption(opts.approval);
-        if (approvalMode) {
-          server.codex = { defaultToolsApprovalMode: approvalMode };
-        }
-        applyMcpTimeoutOptions(server, opts);
-        applyMcpToolFilter(server, opts);
+        applyMcpServerControls(server, opts);
 
         const loaded = await loadMcpConfig();
         const targetName = name.trim();
@@ -1134,10 +1171,6 @@ export function registerMcpCli(program: Command) {
         opts: McpServerControlOptions & {
           enable?: boolean;
           disable?: boolean;
-          clearTools?: boolean;
-          clearTimeouts?: boolean;
-          clearAuth?: boolean;
-          clearTls?: boolean;
         },
       ) => {
         if (opts.enable && opts.disable) {
@@ -1152,43 +1185,8 @@ export function registerMcpCli(program: Command) {
         if (opts.disable) {
           next.enabled = false;
         }
-        if (opts.clearTools) {
-          delete next.toolFilter;
-        } else {
-          applyMcpToolFilter(next, opts);
-        }
-        if (opts.clearTimeouts) {
-          delete next.requestTimeoutMs;
-          delete next.connectionTimeoutMs;
-        }
-        applyMcpTimeoutOptions(next, opts);
-        if (opts.parallel === true) {
-          next.supportsParallelToolCalls = true;
-        } else if (opts.parallel === false) {
-          delete next.supportsParallelToolCalls;
-          delete next.supports_parallel_tool_calls;
-        }
-        const approvalMode = parseMcpApprovalModeOption(opts.approval);
-        if (approvalMode) {
-          next.codex = {
-            ...asRecord(next.codex),
-            defaultToolsApprovalMode: approvalMode,
-          };
-        }
-        if (opts.clearAuth) {
-          delete next.auth;
-          delete next.oauth;
-        }
-        applyMcpOAuthOptions(next, opts);
-        if (opts.clearTls) {
-          delete next.sslVerify;
-          delete next.ssl_verify;
-          delete next.clientCert;
-          delete next.client_cert;
-          delete next.clientKey;
-          delete next.client_key;
-        }
-        applyMcpTlsOptions(next, opts);
+        applyMcpServerControls(next, opts);
+        applyMcpHttpControls(next, opts);
         if (opts.probe && next.enabled !== false && next.auth !== "oauth") {
           await probeMcpServersOrFail({
             config: loaded.config,

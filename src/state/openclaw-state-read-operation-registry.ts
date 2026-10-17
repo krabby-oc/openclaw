@@ -7,6 +7,12 @@ import {
 } from "./worker-operation-registry.js";
 
 const loaders = {
+  githubPublications: () =>
+    import("./github-publication.read.worker.js").then((m) => m.publicationReadOperations),
+  deviceIdentity: () =>
+    import("../infra/device-identity.read.worker.js").then((m) => m.deviceIdentityReadOperations),
+  stateBootstrap: () =>
+    import("./state-bootstrap-read.worker.js").then((m) => m.stateBootstrapReadOperations),
   machineState: () =>
     import("./config-machine-state.read.worker.js").then((m) => m.machineStateReadOperations),
   projects: () =>
@@ -65,6 +71,8 @@ const loaders = {
   sessionUpstream: async () => sessionUpstreamReadOperations,
   diagnostic: () =>
     import("../infra/sqlite-audit-record.kernel.js").then((m) => m.diagnosticReadOperations),
+  restartLifecycle: () =>
+    import("../infra/restart-handoff.read.worker.js").then((m) => m.restartHandoffReadOperations),
   restartSentinel: () =>
     import("../infra/restart-sentinel.read.worker.js").then((m) => m.restartSentinelReadOperations),
 };

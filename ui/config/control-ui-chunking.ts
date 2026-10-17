@@ -103,20 +103,6 @@ export function controlUiStableChunkName(id: string): string | undefined {
   }
 
   if (
-    moduleIdIncludesPackage(id, "lit") ||
-    moduleIdIncludesPackage(id, "lit-html") ||
-    moduleIdIncludesPackage(id, "@lit/reactive-element")
-  ) {
-    // These directives have only deferred consumers. Keep
-    // their implementation and helpers with those consumers, outside startup.
-    return /\/directives\/(?:cache|guard|unsafe-html|until|private-async-helpers)\.js$/u.test(
-      normalized,
-    )
-      ? undefined
-      : "lit-runtime";
-  }
-
-  if (
     moduleIdIncludesPackage(id, "highlight.js") ||
     moduleIdIncludesPackage(id, "markdown-it") ||
     moduleIdIncludesPackage(id, "dompurify") ||
@@ -129,8 +115,12 @@ export function controlUiStableChunkName(id: string): string | undefined {
     return "markdown-runtime";
   }
 
-  if (moduleIdIncludesPackage(id, "zod") || moduleIdIncludesPackage(id, "json5")) {
+  if (moduleIdIncludesPackage(id, "zod")) {
     return "config-runtime";
+  }
+  if (moduleIdIncludesPackage(id, "json5")) {
+    // Zod validates boot snapshots; JSON5 loads only when a config consumer warms it.
+    return "json5-runtime";
   }
 
   if (moduleIdIncludesPackage(id, "libphonenumber-js")) {

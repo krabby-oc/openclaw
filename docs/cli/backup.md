@@ -61,6 +61,17 @@ uses PostgreSQL, stop the Gateway through its service owner first. A running
 Gateway causes a refusal: “stop through the service owner, then rerun.” Backup
 never stops it automatically. The requirement also applies to `create --to`.
 
+Mixed-engine installations use the same commands and archive format. Each
+store's physical engine and selected shared connection determine its capture;
+the default engine alone does not determine backup behavior. Archive restore
+extracts the archived family selections and matching store artifacts into
+staging; it does not restore PostgreSQL rows or activate configuration. Matched
+PostgreSQL restore, including `backup git restore`, verifies the artifacts,
+loads fresh owned namespaces, and produces matching anchors. Activate recovered
+stores with their corresponding family selections before runtime admission.
+SQLite stores remain SQLite. Config includes, active fragments, and companion
+files retain their existing capture and verification rules.
+
 A PostgreSQL capture contains the original anchor, a sanitized SQLite export
 image, and a format-2 manifest with the profile, engine, store UUID, versions,
 active fragments, allocation facts, sizes, and hashes. The manifest contains no
@@ -239,6 +250,10 @@ exactly as recorded in the archive.
   start an agent session after activation to rebuild it from plugin metadata.
 </Warning>
 
+For PostgreSQL stores, archive extraction has not rolled back server rows.
+Complete matched restoration of the PostgreSQL exports into fresh owned
+namespaces before activating the extracted state and its family selections.
+
 Activation is a separate offline operator step. Stop the Gateway, move the
 restored state asset into place or point `OPENCLAW_STATE_DIR` at that asset,
 then run `openclaw doctor` before restarting. Use `manifest.json` as the source
@@ -275,6 +290,14 @@ Explicit content exports, including SQLite snapshots, check the selected archive
 path and actual content source through the same classifier. A support bundle
 reports refused inputs without including their contents. These checks do not
 parse workspace manifests or scan for other state roots.
+
+Database discovery for updates, database porting, and Git backups inspects known
+core database paths and declared plugin database resources, including retained
+stores from disabled plugins. It does not traverse unrelated state directories
+such as historical repair backups. Permission errors in those unrelated trees
+do not block a schema crossing; privacy and permission checks still apply to
+selected database sources. Full archives retain their broader traversal and
+error handling.
 
 The marker is an exclusion instruction, not proof of artifact ownership or
 permission to reopen, adopt, or delete it. Producers must durably write it before
@@ -426,6 +449,8 @@ backup creation does not scrub their history or remove them from later trees.
   Git history is durable. Without `--exclude-secrets`, snapshots include
   credential material and any pushed remote must be private.
 
+SQLite and PostgreSQL Git exports apply the same `--exclude-secrets` policy. PostgreSQL portable images retain empty table definitions so the matching provider can restore them; credential rows and catalog fields are removed before publication.
+
 `src/state/secret-state-tables.ts` is the source of truth for redaction. At this revision, `--exclude-secrets` omits these shared-state tables:
 
 - `audit_identity_keys`
@@ -444,6 +469,7 @@ backup creation does not scrub their history or remove them from later trees.
 - `mcp_oauth_stores`
 - `native_hook_relay_bridges`
 - `secret_store_entries`
+- `web_push_approval_deliveries` (dependent subscription receipts)
 - `web_push_subscriptions`
 - `worker_environment_credentials`
 
@@ -755,6 +781,12 @@ OpenClaw does not enforce a built-in maximum backup size or per-file size limit.
 - Time to walk large workspace trees and compress them into a `.tar.gz`
 - Time to rescan the archive with `--verify` or `openclaw backup verify`
 - Destination filesystem behavior: OpenClaw requires no-overwrite hard-link publication so a final archive path never exposes an in-progress copy; unsupported filesystems fail with an actionable error
+
+Interrupting archive creation with Ctrl-C or SIGTERM stops traversal and compression,
+closes the archive writer, and cleans up its owned partial archive and scratch before
+the command exits. Existing archives and backup source files remain unchanged.
+An archive already published to the requested local destination is retained;
+admitted verification and best-effort outcome recording finish before signal exit.
 
 If final-directory durability confirmation fails after publication, the command reports failure but preserves the complete final entry rather than risk deleting a concurrent replacement.
 

@@ -24,7 +24,7 @@ import {
 import { cleanBlocksForDescendant, patchTable } from "./docx-table-ops.js";
 import type { FeishuDocxBlock, FeishuDocxBlockChild } from "./docx-types.js";
 import { resolveDocToolLocalRoots, resolveDocxUploadInput } from "./docx-upload-input.js";
-import { createFeishuToolClient, resolveFeishuToolAccount } from "./tool-account.js";
+import { resolveFeishuToolAccount } from "./tool-account.js";
 import { registerFeishuTool } from "./tool-registration.js";
 import { feishuExternalToolResult as json } from "./tool-result.js";
 
@@ -95,11 +95,9 @@ function normalizeConvertedBlockTree(
   }
 
   const byId = new Map<string, FeishuDocxBlock>();
-  const originalOrder = new Map<string, number>();
-  for (const [index, block] of blocks.entries()) {
+  for (const block of blocks) {
     if (typeof block?.block_id === "string") {
       byId.set(block.block_id, block);
-      originalOrder.set(block.block_id, index);
     }
   }
 
@@ -119,11 +117,6 @@ function normalizeConvertedBlockTree(
       const parentId = typeof block?.parent_id === "string" ? block.parent_id : "";
       return !childIds.has(blockId) && (!parentId || !byId.has(parentId));
     })
-    .toSorted(
-      (a, b) =>
-        (originalOrder.get(a.block_id ?? "__missing__") ?? 0) -
-        (originalOrder.get(b.block_id ?? "__missing__") ?? 0),
-    )
     .map((block) => block.block_id)
     .filter((blockId): blockId is string => typeof blockId === "string");
 
@@ -739,6 +732,12 @@ async function writeTableCells(
         continue;
       }
 
+      const converted = await convertMarkdown(client, rowValues[c] ?? "");
+      const { orderedBlocks } = normalizeConvertedBlockTree(
+        converted.blocks,
+        converted.firstLevelBlockIds,
+      );
+
       // table cell is a container block: clear existing children, then create text child blocks
       const childrenRes = await client.docx.documentBlockChildren.get({
         path: { document_id: docToken, block_id: cellId },
@@ -749,13 +748,6 @@ async function writeTableCells(
       if (existingChildren.length > 0) {
         await deleteBlockChildren(client, docToken, cellId, 0, existingChildren.length);
       }
-
-      const text = rowValues[c] ?? "";
-      const converted = await convertMarkdown(client, text);
-      const { orderedBlocks } = normalizeConvertedBlockTree(
-        converted.blocks,
-        converted.firstLevelBlockIds,
-      );
 
       if (orderedBlocks.length > 0) {
         await insertBlocks(client, docToken, orderedBlocks, cellId);
@@ -837,7 +829,6 @@ export function registerFeishuDocTools(api: OpenClawPluginApi) {
           case "get_block":
             return json(await getBlock(client, p.doc_token, p.block_id));
           case "update_block": {
-            await getBlock(client, p.doc_token, p.block_id);
             const res = await client.docx.documentBlock.patch({
               path: { document_id: p.doc_token, block_id: p.block_id },
               data: {
@@ -900,13 +891,9 @@ export function registerFeishuDocTools(api: OpenClawPluginApi) {
     description:
       "List current app permissions (scopes). Use to debug permission issues or check available capabilities.",
     parameters: Type.Object({}),
-    createExecute(ctx, cfg) {
+    createExecute(_ctx, _cfg, createClient) {
       return async (_params) => {
-        const client = createFeishuToolClient({
-          cfg,
-          defaultAccountId: ctx.agentAccountId,
-          requiredTool: { family: "scopes", label: "App Scopes" },
-        });
+        const client = createClient(undefined, "App Scopes");
         const res = await client.application.scope.list({});
         assertFeishuApiSuccess(res);
         const scopes = res.data?.scopes ?? [];

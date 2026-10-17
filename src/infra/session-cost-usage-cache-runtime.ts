@@ -25,6 +25,7 @@ import type {
   CostUsageSummary,
   SessionCostSummary,
   UsageCacheStatus,
+  UsageCostTranscriptFile,
   UsageDailyBucket,
 } from "./session-cost-usage.types.js";
 
@@ -218,7 +219,11 @@ async function loadAggregateCostUsageSummary(
 }
 
 type SessionCostReadParams = {
-  sessions: Array<{ sessionId?: string; sessionFile: string }>;
+  sessions: Array<{
+    sessionId?: string;
+    sessionFile: string;
+    transcriptFile?: UsageCostTranscriptFile;
+  }>;
   config?: OpenClawConfig;
   agentId: string;
   startMs?: number;
@@ -227,16 +232,20 @@ type SessionCostReadParams = {
   dayBucket?: UsageDailyBucket;
   requestRefresh?: boolean;
   maxPublicationWaitMs?: number;
+  reportBudgetBytes?: number;
 };
 
-export async function loadSessionCostSummariesFromCache(
-  params: SessionCostReadParams,
-): Promise<{ summaries: Array<SessionCostSummary | null>; cacheStatus: UsageCacheStatus }> {
+export async function loadSessionCostSummariesFromCache(params: SessionCostReadParams): Promise<{
+  summaries: Array<SessionCostSummary | null>;
+  cacheStatus: UsageCacheStatus;
+  remainingReportBytes?: number;
+}> {
   const result = await loadSessionCostResultFromCache(params);
-  if (result.kind !== "sessions") {
-    throw new Error("Usage worker returned an invalid session summary");
-  }
-  return { summaries: result.summaries, cacheStatus: result.cacheStatus };
+  return {
+    summaries: result.summaries,
+    cacheStatus: result.cacheStatus,
+    remainingReportBytes: result.remainingReportBytes,
+  };
 }
 
 function loadSessionCostResultFromCache(params: SessionCostReadParams) {
@@ -268,6 +277,7 @@ async function loadCapturedSessionCostSummariesFromCache(
     startMs: params.startMs,
     endMs: params.endMs,
     includeUntimestamped: params.includeUntimestamped,
+    reportBudgetBytes: params.reportBudgetBytes,
     dayBucket: resolveUsageCostWorkerDayBucket(params.dayBucket),
   });
   if (result.kind !== "sessions") {
@@ -568,7 +578,6 @@ async function runQueuedUsageCostRefresh(
         }
       } catch (error) {
         if (signal?.aborted && !(error instanceof AggregateError) && isAbortError(error)) {
-          logger.debug("background refresh cancelled during shutdown");
           return;
         }
         logger.warn(`background refresh failed: ${formatErrorMessage(error)}`, { error });

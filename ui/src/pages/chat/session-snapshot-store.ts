@@ -5,12 +5,14 @@ import { z } from "zod";
 import { ProgressCardSchema } from "../../../../packages/gateway-protocol/src/schema/progress-card.js";
 import { SessionRowSchema } from "../../../../packages/gateway-protocol/src/schema/sessions-row.js";
 import { requestResult, transactionComplete } from "../../lib/chat/control-ui-database.runtime.ts";
+import { removePairingQrContent } from "../../lib/chat/pairing-qr.ts";
 import {
   getSessionCacheValue,
   MAX_CACHED_CHAT_SESSIONS,
   setSessionCacheValue,
 } from "./session-cache.ts";
 import {
+  CHAT_TRANSCRIPT_METADATA_KEYS,
   MAX_CACHED_CHAT_WEIGHT,
   type ChatCacheObserver,
   type ChatMessageCache,
@@ -60,17 +62,7 @@ const paginationSchema = z.discriminatedUnion("hasMore", [
     .strict(),
 ]);
 
-const transcriptMetadataSchema = Type.Pick(SessionRowSchema, [
-  "key",
-  "kind",
-  "classification",
-  "participants",
-  "expandedParticipants",
-  "owner",
-  "lastRunId",
-  "status",
-  "runtimeMs",
-]);
+const transcriptMetadataSchema = Type.Pick(SessionRowSchema, CHAT_TRANSCRIPT_METADATA_KEYS);
 
 const snapshotSchema = z
   .object({
@@ -145,14 +137,13 @@ function createSnapshotRecord(
   sessionKey: string,
   pending: PendingSessionState,
 ): PreparedSnapshotRecord | null {
-  const sourceSnapshot = pending.snapshot;
-  let snapshot: unknown;
+  let snapshot: ChatSessionSnapshot;
   let weight: number;
   try {
-    const json = JSON.stringify(sourceSnapshot);
-    if (!json) {
-      return null;
-    }
+    // Pairing credentials stay in the live projection, never the browser's disk cache.
+    const json = JSON.stringify(pending.snapshot, (_key, value: unknown) =>
+      removePairingQrContent(value),
+    );
     snapshot = JSON.parse(json);
     weight = json.length;
   } catch {
@@ -164,19 +155,14 @@ function createSnapshotRecord(
     sessionId: pending.snapshot.sessionId,
     sessionKey,
   };
-  const record = parseSnapshotRecord({ ...envelope, snapshot });
-  // Validation does not transform JSON values. Preserve the existing code-unit
-  // budget: snapshot JSON plus envelope JSON, excluding the enclosing snapshot key.
-  return record
-    ? {
-        record,
-        metadata: {
-          savedAt: record.savedAt,
-          sessionKey,
-          weight: weight + JSON.stringify(envelope).length,
-        },
-      }
-    : null;
+  return {
+    record: { ...envelope, snapshot },
+    metadata: {
+      savedAt: pending.savedAt,
+      sessionKey,
+      weight: weight + JSON.stringify(envelope).length,
+    },
+  };
 }
 
 async function readSnapshotMetadata(): Promise<SessionSnapshotMetadata[] | null> {
@@ -388,15 +374,11 @@ export class SessionSnapshotStore implements ChatCacheObserver {
     }
     const isCurrent = this.captureReadScope(key);
     try {
-      const admitted = validate(model);
-      if (admitted === null) {
-        return false;
-      }
       const record: SidebarRecord = {
         sessionKey: key,
         savedAt: Date.now(),
         projectionVersion: 1,
-        model: structuredClone(admitted),
+        model: structuredClone(model),
       };
       if (sidebarRecordBytes(record) > 512 * 1024) {
         return false;
@@ -444,8 +426,15 @@ export class SessionSnapshotStore implements ChatCacheObserver {
       await resetSessionSnapshotDatabase();
       return null;
     }
-    setSessionCacheValue(this.hydratedSnapshots, sessionKey, new WeakRef(record.snapshot));
-    return record.snapshot;
+    let snapshot = record.snapshot;
+    const messages = snapshot.messages.map(removePairingQrContent);
+    if (messages.some((message, index) => message !== snapshot.messages[index])) {
+      snapshot = { ...snapshot, messages };
+      // Older writers persisted live QR credentials; repair through the normal write owner.
+      this.write(sessionKey, snapshot);
+    }
+    setSessionCacheValue(this.hydratedSnapshots, sessionKey, new WeakRef(snapshot));
+    return snapshot;
   }
 
   async loadSavedAtIndex(): Promise<void> {
@@ -618,6 +607,7 @@ function flushActiveStores(): void {
   }
 }
 
+// Module-lifetime browser events flush every active store, including during page teardown.
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", flushActiveStores);
   document.addEventListener("visibilitychange", () => {

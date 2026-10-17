@@ -8,7 +8,6 @@ import {
   resolveSessionStoreAgentId,
   resolveStoredSessionKeyForAgentStore,
 } from "../../gateway/session-store-key.js";
-import { createGatewaySessionLineageReader } from "../../gateway/session-utils-store-lineage.native.js";
 import {
   isIncognitoSessionKey,
   normalizeAgentId,
@@ -51,7 +50,6 @@ import type {
 } from "./combined-store.types.js";
 import { canonicalizeMainSessionAlias } from "./main-session.js";
 import { resolveSessionStorePathCore } from "./paths.js";
-import { listSessionEntriesReadOnly } from "./session-accessor.js";
 import { captureMemoryExactSessionReader } from "./session-accessor.memory-exact-read.js";
 import type { SessionEntrySummary } from "./session-accessor.types.js";
 import { memorySessionActorOwners } from "./session-actor-memory-owner.js";
@@ -67,10 +65,7 @@ import {
 } from "./targets.js";
 import type { SessionEntry } from "./types.js";
 
-export type {
-  GatewayStoredSessionTarget,
-  GatewayStoredSessionTargets,
-} from "./combined-store-model-sources.js";
+export type { GatewayStoredSessionTarget } from "./combined-store-model-sources.js";
 export type {
   GatewaySessionStoreOptions,
   ResolvedGatewaySessionStoreTargets,
@@ -94,19 +89,6 @@ type PreparedConfiguredSessionStoreTargets = {
 
 // Durable target discovery follows config and registry receipts. Memory owners are read directly.
 let preparedConfiguredSessionStoreTargets: PreparedConfiguredSessionStoreTargets | undefined;
-
-function loadGatewayStoreEntries(params: {
-  agentId: string;
-  projection: GatewaySessionEntryProjection;
-  storePath: string;
-}) {
-  return listSessionEntriesReadOnly({
-    agentId: params.agentId,
-    clone: false,
-    projection: params.projection,
-    storePath: params.storePath,
-  });
-}
 
 // The listing accessor owns delivery-key validation; federation owns config aliases and targets.
 function mergeSessionEntryIntoCombined(params: {
@@ -138,7 +120,7 @@ export function projectGatewaySessionEntry(
   entry: SessionEntry,
   resolveSourceKey?: (key: string) => string,
 ): SessionEntry {
-  const projected = { ...entry };
+  let projected = entry;
   // Global display uses the captured parent selection; per-sender lineage stays literal.
   // Raw sentinels keep their physical owner and are never reinterpreted here.
   if (cfg.session?.scope === "global") {
@@ -146,9 +128,15 @@ export function projectGatewaySessionEntry(
       const sessionKey = projected[field];
       const parsed = sessionKey ? parseAgentSessionKey(sessionKey) : null;
       if (sessionKey && parsed) {
-        projected[field] =
+        const sourceKey =
           resolveSourceKey?.(sessionKey) ??
           canonicalizeMainSessionAlias({ cfg, agentId: parsed.agentId, sessionKey });
+        if (sourceKey !== sessionKey) {
+          if (projected === entry) {
+            projected = { ...entry };
+          }
+          projected[field] = sourceKey;
+        }
       }
     }
   }
@@ -681,21 +669,4 @@ export function mergeCombinedSessionStore(
     store: combined,
     targetsBySessionKey,
   };
-}
-
-export function loadCombinedSessionStoreForGatewayCore(
-  cfg: OpenClawConfig,
-  opts: GatewaySessionStoreOptions = {},
-): GatewayCombinedSessionStore {
-  const prepared = prepareCombinedSessionStore(cfg, opts);
-  return mergeCombinedSessionStore(
-    cfg,
-    opts,
-    prepared,
-    (target) =>
-      opts.loadEntries
-        ? opts.loadEntries(target, prepared.projection)
-        : loadGatewayStoreEntries({ ...target, projection: prepared.projection }),
-    createGatewaySessionLineageReader(cfg),
-  );
 }

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, For, onSettled, Show } from "solid-js";
 import type { AgentsWorkspaceGetResult } from "../../../../packages/gateway-protocol/src/index.js";
 import type { MemorySearchResponse } from "../../../../src/gateway/server-methods/memory-search.ts";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
@@ -6,7 +6,6 @@ import { ShellLayoutBoundary } from "../../app/shell-layout-traits-solid.tsx";
 import { registerSettingsEnglish } from "../../i18n/locales/en-settings.ts";
 import { formatUiError } from "../../lib/format-error.ts";
 import { t, registerEnglishCatalog } from "../../lib/reactive/i18n.ts";
-import { defineSolidBridge } from "../../lit/solid-bridge.ts";
 import "../../styles/memory-memories.css";
 
 registerEnglishCatalog(registerSettingsEnglish);
@@ -61,7 +60,16 @@ function FileContent(props: { content: string; result: SearchResult }) {
   );
 }
 
-function MemoryMemoriesContent(props: MemoryMemoriesProps) {
+export function MemoryMemories(props: MemoryMemoriesProps) {
+  // Search drafts and outstanding reads belong to this agent and connection.
+  const identity = createMemo(
+    () => [props.agentId, props.client, props.connected, props.methodAdvertised],
+    { equals: (previous, next) => previous.every((value, index) => value === next[index]) },
+  );
+  return <For each={[identity()]}>{() => <MemorySearch {...props} />}</For>;
+}
+
+function MemorySearch(props: MemoryMemoriesProps) {
   const [query, setQuery] = createSignal("");
   const [searchState, setSearchState] = createSignal<SearchState>({ kind: "idle" });
   const [openResultKey, setOpenResultKey] = createSignal<string | null>(null);
@@ -69,24 +77,7 @@ function MemoryMemoriesContent(props: MemoryMemoriesProps) {
   let searchRequest: object | null = null;
   const detailRequests = new Map<string, object>();
 
-  function resetSearch() {
-    searchRequest = null;
-    detailRequests.clear();
-    setQuery("");
-    setSearchState({ kind: "idle" });
-    setOpenResultKey(null);
-    setDetails(new Map());
-  }
-
-  createEffect(
-    () => [props.agentId, props.client, props.connected, props.methodAdvertised] as const,
-    (_identity, previous) => {
-      if (previous) {
-        resetSearch();
-      }
-    },
-  );
-  onCleanup(() => {
+  onSettled(() => () => {
     searchRequest = null;
     detailRequests.clear();
   });
@@ -328,63 +319,52 @@ function MemoryMemoriesContent(props: MemoryMemoriesProps) {
   }
 
   return (
-    <ShellLayoutBoundary traits={{ settingsPage: true }}>
-      <div class="settings-page memory-memories">
-        {!props.methodAdvertised ? (
-          <p class="memory-memories__unavailable">
-            {t("memoryPage.memories.gatewayUpdateRequired")}
-          </p>
-        ) : (
-          <>
-            <form
-              class="memory-memories__search"
-              role="search"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void search(query());
-              }}
-            >
-              <label class="settings-control__sr-label" for="memory-search-input">
-                {t("memoryPage.memories.searchLabel")}
-              </label>
-              <input
-                id="memory-search-input"
-                type="search"
-                class="settings-input"
-                value={query()}
-                placeholder={t("memoryPage.memories.searchPlaceholder")}
-                onInput={(event) => setQuery(event.currentTarget.value)}
-              />
-              <button
-                class="btn btn--sm primary"
-                type="submit"
-                disabled={
-                  !props.connected ||
-                  !props.agentId ||
-                  !query().trim() ||
-                  searchState().kind === "loading"
-                }
+    <openclaw-memory-memories>
+      <ShellLayoutBoundary traits={{ settingsPage: true }}>
+        <div class="settings-page memory-memories">
+          {!props.methodAdvertised ? (
+            <p class="memory-memories__unavailable">
+              {t("memoryPage.memories.gatewayUpdateRequired")}
+            </p>
+          ) : (
+            <>
+              <form
+                class="memory-memories__search"
+                role="search"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void search(query());
+                }}
               >
-                {t("memoryPage.memories.searchButton")}
-              </button>
-            </form>
-            <SearchStatus />
-          </>
-        )}
-      </div>
-    </ShellLayoutBoundary>
+                <label class="settings-control__sr-label" for="memory-search-input">
+                  {t("memoryPage.memories.searchLabel")}
+                </label>
+                <input
+                  id="memory-search-input"
+                  type="search"
+                  class="settings-input"
+                  value={query()}
+                  placeholder={t("memoryPage.memories.searchPlaceholder")}
+                  onInput={(event) => setQuery(event.currentTarget.value)}
+                />
+                <button
+                  class="btn btn--sm primary"
+                  type="submit"
+                  disabled={
+                    !props.connected ||
+                    !props.agentId ||
+                    !query().trim() ||
+                    searchState().kind === "loading"
+                  }
+                >
+                  {t("memoryPage.memories.searchButton")}
+                </button>
+              </form>
+              <SearchStatus />
+            </>
+          )}
+        </div>
+      </ShellLayoutBoundary>
+    </openclaw-memory-memories>
   );
 }
-
-export const MemoryMemories = defineSolidBridge<MemoryMemoriesProps>(
-  "openclaw-memory-memories",
-  (props) => <MemoryMemoriesContent {...props} />,
-  {
-    properties: {
-      client: { default: null, attribute: false },
-      connected: { default: false, type: Boolean },
-      methodAdvertised: { default: true, type: Boolean },
-      agentId: { default: null },
-    },
-  },
-);

@@ -15,7 +15,7 @@ import {
 } from "../../lib/reactive/application.ts";
 import { useApplication } from "../../lib/reactive/context.ts";
 import { t } from "../../lib/reactive/i18n.ts";
-import { defineSolidBridge } from "../../lit/solid-bridge.ts";
+import { listen } from "../../lib/reactive/listener.ts";
 import "../../styles/debug-data.css";
 import { requestDebugOverlayToggle } from "./debug-overlay-contract.ts";
 import { DebugPageView } from "./view.tsx";
@@ -34,7 +34,7 @@ type DebugData = Omit<Diagnostics, "status" | "health"> & {
   health: Diagnostics["health"] | null;
 };
 
-function DebugPageContent() {
+export function DebugPage() {
   const context: ApplicationContext = useApplication();
   const gateway = projectGateway(context.gateway);
   const events = projectGatewayEventLog(context.gateway);
@@ -182,14 +182,14 @@ function DebugPageContent() {
       void loadLiveDiagnostics();
     }
   };
-  document.addEventListener("visibilitychange", visibilityChanged);
+  const stopVisibility = listen(document, "visibilitychange", visibilityChanged);
   syncPolling();
   void loadDiagnostics();
   onCleanup(() => {
     disposed = true;
     invalidate();
     clearInterval(timer);
-    document.removeEventListener("visibilitychange", visibilityChanged);
+    stopVisibility();
     stopSelection();
     stopGateway();
     lifecycle.dispose();
@@ -224,7 +224,7 @@ function DebugPageContent() {
     return state[key];
   };
   return (
-    <>
+    <openclaw-debug-page>
       <ShellLayoutBoundary traits={{ toolbarHeader: true }}>
         <section class="content-header">
           <div>
@@ -263,10 +263,6 @@ function DebugPageContent() {
           onCall={() => void callDebugMethod()}
         />
       </SettingsWorkspace>
-    </>
+    </openclaw-debug-page>
   );
 }
-
-export const DebugPage = defineSolidBridge("openclaw-debug-page", DebugPageContent, {
-  properties: {},
-});

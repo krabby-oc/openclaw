@@ -132,12 +132,13 @@ export async function prepareDoctorInteractiveMaintenance(params: {
 export async function prepareDoctorMaintenanceArchives(
   databasePreflight: DoctorDatabasePreflight | undefined,
   runtime: RuntimeEnv,
+  preflightOptions: { preserveSourceArtifacts?: true } = {},
 ): Promise<DoctorDatabasePreflight["agentDatabaseMigrationDiscovery"]> {
   let discovery: DoctorDatabasePreflight["agentDatabaseMigrationDiscovery"];
   try {
     const { prepareDoctorDatabasePreflight } =
       await import("../commands/doctor-database-preflight.js");
-    discovery = (databasePreflight ?? (await prepareDoctorDatabasePreflight()))
+    discovery = (databasePreflight ?? (await prepareDoctorDatabasePreflight(preflightOptions)))
       .agentDatabaseMigrationDiscovery;
     if (discovery) {
       const { prepareCanonicalTranscriptArchiveMigrations } =
@@ -157,6 +158,7 @@ export async function prepareDoctorMaintenanceArchives(
 export async function prepareDoctorStateSchema(
   schemas: DoctorDatabasePreflight,
   shouldRepair: boolean,
+  integrityCheck?: "quick" | "full",
 ) {
   if (!shouldRepair || !schemas.pendingMigrations?.some((entry) => entry.kind === "state")) {
     return undefined;
@@ -164,7 +166,7 @@ export async function prepareDoctorStateSchema(
   const { prepareLegacyStateDatabaseSchema } = await import("../infra/state-migrations.doctor.js");
   const { throwIfDoctorStateMigrationRefused } =
     await import("../infra/state-migrations.messages.js");
-  const receipt = await prepareLegacyStateDatabaseSchema(process.env);
+  const receipt = await prepareLegacyStateDatabaseSchema(process.env, integrityCheck);
   throwIfDoctorStateMigrationRefused([receipt]);
   return receipt;
 }

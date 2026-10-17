@@ -57,7 +57,7 @@ export function normalizeConfiguredSpeechProviderId(
 }
 
 export function normalizeTtsPersonaId(personaId: string | null | undefined): string | undefined {
-  return normalizeOptionalLowercaseString(personaId ?? undefined);
+  return normalizeOptionalLowercaseString(personaId);
 }
 
 export function resolveModelOverridePolicy(
@@ -106,14 +106,12 @@ function normalizeProviderConfigMap(
 }
 
 function collectTtsPersonas(raw: TtsConfig): Record<string, ResolvedTtsPersona> {
-  const rawPersonas = asNonArrayRecord(raw.personas);
   const personas: Record<string, ResolvedTtsPersona> = {};
-  for (const [id, value] of Object.entries(rawPersonas)) {
+  for (const [id, persona] of Object.entries(raw.personas ?? {})) {
     const normalizedId = normalizeTtsPersonaId(id);
-    if (!normalizedId || !isRecord(value)) {
+    if (!normalizedId) {
       continue;
     }
-    const persona = value as Omit<ResolvedTtsPersona, "id">;
     personas[normalizedId] = {
       ...persona,
       id: normalizedId,
@@ -191,7 +189,7 @@ export function resolveTtsPrefsPath(
   config: ResolvedTtsConfig,
   preparedTtsPreferences: PreparedTtsPreferences,
 ): string;
-/** @deprecated Use resolveTtsPrefsPathAsync or pass awaited prepareTtsPreferences(). Removal follows a stable deprecation period. */
+/** @deprecated Use resolveTtsPrefsPathAsync or pass awaited prepareTtsPreferences(). Final compatibility day: 2026-12-31. */
 export function resolveTtsPrefsPath(
   config: ResolvedTtsConfig,
   preparedTtsPreferences?: PreparedTtsPreferences,
@@ -332,7 +330,7 @@ export function buildTtsSystemPromptHint(
   agentId: string | undefined,
   options: { messageToolOnly?: boolean; preparedTtsPreferences: PreparedTtsPreferences },
 ): string | undefined;
-/** @deprecated Use buildTtsSystemPromptHintAsync or pass awaited prepareTtsPreferences(). Removal follows a stable deprecation period. */
+/** @deprecated Await api.runtime.tts.buildSystemPromptHintAsync. Bundled callers can pass awaited prepareTtsPreferences(). Final compatibility day: 2026-12-31. */
 export function buildTtsSystemPromptHint(
   cfg: OpenClawConfig,
   agentId?: string,
@@ -348,7 +346,7 @@ export function buildTtsSystemPromptHint(
       family: "tts",
       method: "buildTtsSystemPromptHint",
       replacement:
-        "buildTtsSystemPromptHintAsync or await prepareTtsPreferences() and pass preparedTtsPreferences",
+        "api.runtime.tts.buildSystemPromptHintAsync (bundled callers can also pass awaited prepareTtsPreferences())",
     });
   }
   const settings = resolveTtsSettingsSnapshot({

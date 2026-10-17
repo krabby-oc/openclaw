@@ -39,6 +39,7 @@ const quarantineSchemaAdmission: SqliteDatabaseAdmissionKey<{
   version: number;
 }> = {
   name: "openclaw.quarantine.schema",
+  lifetime: "process",
   schemaDependent: true,
   read(value) {
     if (
@@ -60,6 +61,7 @@ function quarantineDecisionAdmission(
 ): SqliteDatabaseAdmissionKey<QuarantineDecision | null> {
   return {
     name: `openclaw.quarantine.decision:${path.resolve(pathname)}`,
+    lifetime: "process",
     read: (value) => (value === null || isQuarantineDecision(value) ? value : undefined),
   };
 }
@@ -84,15 +86,15 @@ function configureQuarantineWriter(database: DatabaseSync, storePath: string): v
     return;
   }
   if (userVersion === 1) {
-    database.exec(`
-      BEGIN IMMEDIATE;
+    runSqliteImmediateTransactionSync(database, () =>
+      database.exec(`
       ALTER TABLE quarantined_databases ADD COLUMN verified_generation TEXT;
       PRAGMA user_version = ${OPENCLAW_QUARANTINE_SCHEMA_VERSION};
-      COMMIT;
-    `);
+    `),
+    );
   } else if (userVersion !== OPENCLAW_QUARANTINE_SCHEMA_VERSION) {
-    database.exec(`
-    BEGIN IMMEDIATE;
+    runSqliteImmediateTransactionSync(database, () =>
+      database.exec(`
     CREATE TABLE IF NOT EXISTS quarantined_databases (
       path TEXT NOT NULL PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -102,8 +104,8 @@ function configureQuarantineWriter(database: DatabaseSync, storePath: string): v
       verified_generation TEXT
     ) STRICT;
     PRAGMA user_version = ${OPENCLAW_QUARANTINE_SCHEMA_VERSION};
-    COMMIT;
-    `);
+    `),
+    );
   }
   // Preserve the released v2 layout. Runtime receipts now live in file seals;
   // removing this inert table belongs to a future schema migration.
