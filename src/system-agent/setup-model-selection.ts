@@ -11,6 +11,7 @@ import { resolveModelRuntimePolicy } from "../agents/model-runtime-policy.js";
 import { applyMergePatch } from "../config/merge-patch.js";
 import { mergeAgentModelEntryForConfig } from "../config/model-input.js";
 import { materializeModelPolicyAllowlist } from "../config/model-policy-allowlist-migration.js";
+import { resolveMergedModelProviderEntry } from "../config/model-provider-config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { parseSecretRef } from "../config/types.secrets.js";
 import { materializeUtilityModelSeparation } from "../config/utility-model-separation-migration.js";
@@ -263,9 +264,9 @@ export function projectSetupInferenceConfig(params: {
     }
   }
   const provider = parseProviderModelRef(params.modelRef)?.provider ?? "";
-  const providerKey = findNormalizedProviderKey(params.prepared.models?.providers, provider);
-  const providerConfig = providerKey ? params.prepared.models?.providers?.[providerKey] : undefined;
-  if (providerKey && providerConfig) {
+  const providerEntry = resolveMergedModelProviderEntry(params.prepared, provider);
+  if (providerEntry) {
+    const { providerKey, providerConfig } = providerEntry;
     const selectedProvider = structuredClone(providerConfig);
     if (params.profileId) {
       if (params.credential?.type === "api_key" || params.credential?.type === "token") {

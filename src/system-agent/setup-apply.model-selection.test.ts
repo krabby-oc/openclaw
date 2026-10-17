@@ -78,6 +78,11 @@ describe("projectSetupInferenceConfig", () => {
       const prepared: OpenClawConfig = {
         models: {
           providers: {
+            [provider.toUpperCase()]: {
+              baseUrl: "http://127.0.0.1:8003/v1",
+              apiKey: "stale-prepared-alias",
+              models: [],
+            },
             [provider]: {
               baseUrl: "http://127.0.0.1:8000/v1",
               apiKey:
@@ -95,8 +100,16 @@ describe("projectSetupInferenceConfig", () => {
         base: {
           models: {
             providers: {
-              [provider.toUpperCase()]: { apiKey: "old-alias-key", models: [] },
-              [provider]: { apiKey: "old-canonical-key", models: [] },
+              [provider.toUpperCase()]: {
+                baseUrl: "http://127.0.0.1:8001/v1",
+                apiKey: "old-alias-key",
+                models: [],
+              },
+              [provider]: {
+                baseUrl: "http://127.0.0.1:8002/v1",
+                apiKey: "old-canonical-key",
+                models: [],
+              },
               sibling: { baseUrl: "http://127.0.0.1:9000/v1", models: [] },
             },
           },
