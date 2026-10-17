@@ -136,10 +136,11 @@ export const AgentsUpdateResultSchema = closedObject({
 
 /** Generates an avatar preview from text explicitly supplied by its creator. */
 export const AgentsAvatarGenerateParamsSchema = closedObject({
+  agentId: NonEmptyString,
   prompt: Type.String({ minLength: 1, maxLength: 8_000, pattern: "\\S" }),
 });
 
-/** ClawHub renders the static SVG; generating does not change the saved identity. */
+/** The Gateway renders the static SVG; generating does not change the saved identity. */
 export const AgentsAvatarGenerateResultSchema = closedObject({
   name: Type.String({ minLength: 1, maxLength: 120 }),
   description: Type.String({ minLength: 1, maxLength: 2_000 }),

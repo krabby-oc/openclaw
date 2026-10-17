@@ -4,35 +4,57 @@ import {
   validateAgentsAvatarGenerateParams,
   validateAgentsAvatarGenerateResult,
 } from "../../../packages/gateway-protocol/src/index.js";
-import { fetchClawHubJson } from "../../infra/clawhub-client.js";
-import { formatErrorMessage } from "../../infra/errors.js";
+import { generateBlobsterForAgent } from "../../agents/blobster-generation.js";
+import { captureGatewayOperatorRunAuthority } from "../operator-run-authority.js";
 import { defineValidatedGatewayMethod } from "./validation.js";
 
 export const agentAvatarGenerateHandler = defineValidatedGatewayMethod(
   "agents.avatar.generate",
   validateAgentsAvatarGenerateParams,
-  async ({ params, respond, signal, hasCurrentClientAuthority }) => {
-    // Only creator-approved text crosses this boundary. Workspace files and
-    // identity persistence belong to their existing, explicit operations.
-    const result = await fetchClawHubJson<unknown>({
-      path: "/api/v1/blobsters/generate",
-      method: "POST",
-      json: { prompt: params.prompt },
-      timeoutMs: 90_000,
-      maxResponseBytes: 256 * 1024,
-      fetchImpl: (input, init) => {
-        // Token lookup yields; revocation must still prevent the paid request.
-        signal?.throwIfAborted();
-        if (hasCurrentClientAuthority?.() === false) {
-          throw new Error("Avatar generation access changed. Reconnect and try again.");
-        }
-        return fetch(input, init);
-      },
+  async ({ params, respond, context, client, signal, hasCurrentClientAuthority }) => {
+    const assertCurrent = () => {
+      signal?.throwIfAborted();
+      if (hasCurrentClientAuthority?.() === false) {
+        throw new Error("Avatar generation access changed. Reconnect and try again.");
+      }
+    };
+    const operator = await captureGatewayOperatorRunAuthority({
+      client,
+      context,
+      hasCurrentClientAuthority,
+      invocationAuthority: { assertCurrent, signal },
     });
-    if (!validateAgentsAvatarGenerateResult(result)) {
-      throw new Error("ClawHub returned an invalid avatar preview. Try generating again.");
+    if (!operator) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.FORBIDDEN, "Avatar generation requires an authenticated operator."),
+      );
+      return;
     }
-    respond(true, result, undefined);
+    try {
+      assertCurrent();
+      const result = await generateBlobsterForAgent({
+        cfg: context.getRuntimeConfig(),
+        agentId: params.agentId,
+        prompt: params.prompt,
+        assertCurrent,
+        operatorAuthority: operator.authority,
+        signal,
+      });
+      assertCurrent();
+      if (!validateAgentsAvatarGenerateResult(result)) {
+        throw new Error("Invalid avatar preview.");
+      }
+      respond(true, result, undefined);
+    } finally {
+      operator.release();
+    }
   },
-  (error) => errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)),
+  // Provider output and account details must not be reflected to the browser.
+  () =>
+    errorShape(
+      ErrorCodes.UNAVAILABLE,
+      "Could not generate a valid Blobster with the selected model.",
+    ),
 );
