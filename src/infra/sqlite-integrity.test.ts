@@ -1,6 +1,9 @@
+import fs from "node:fs";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { requireNodeSqlite } from "./node-sqlite.js";
 import {
   assertSqliteIntegrity,
@@ -10,6 +13,8 @@ import {
   type SqliteIntegrityDiagnostics,
   type SqliteIntegrityOperation,
 } from "./sqlite-integrity.js";
+
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 describe("assertSqliteIntegrity", () => {
   it("refuses structural damage in a table outside the migration scope", () => {
