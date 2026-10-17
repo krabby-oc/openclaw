@@ -63,6 +63,11 @@ only while its dashboard is focused. Web browsers keep `Cmd+Shift+O` or
 `Cmd+Shift+Space` or `Ctrl+Shift+Space` shortcut, including when another app is
 in front.
 
+New Quick Chat shortcut assignments cannot use either New Session chord. An
+existing saved `Cmd+N` or `Ctrl+N` Quick Chat binding keeps its behavior after
+upgrading; change it in Quick Chat's shortcut settings to use that chord for
+New Session instead.
+
 ## Chrome setup bridge
 
 The selected main dashboard can explicitly inspect, install, or verify Chrome
