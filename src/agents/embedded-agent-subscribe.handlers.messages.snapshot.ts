@@ -242,8 +242,35 @@ export function reconcileBlockReplySnapshot(
     return;
   }
 
-  // A rewritten, already-delivered source restarts best-effort instead of reconstructing old breaks.
-  ctx.state.blockReplyScopeStart = undefined;
-  ctx.blockChunker.reset();
-  ctx.blockChunker.append(next.blockText);
+  let restartIndex = next.parts[0]?.index ?? 0;
+  let restartPrefix = "";
+  for (const part of next.parts) {
+    const index = part.index ?? 0;
+    if (!index || !part.separator) {
+      continue;
+    }
+    const oldBoundary = prefixAt(previous, index);
+    const nextBoundary = prefixAt(next, index);
+    if (
+      oldBoundary === nextBoundary &&
+      previous.blockText.startsWith(oldBoundary) &&
+      next.blockText.startsWith(nextBoundary) &&
+      oldBoundary.length <= oldPrefix.length + consumed &&
+      !crossesCode(previous, oldBoundary.length) &&
+      !crossesCode(next, nextBoundary.length)
+    ) {
+      restartIndex = index;
+      restartPrefix = nextBoundary;
+    }
+  }
+  if (retainedPrefix && nextText.length < consumed && restartPrefix !== next.blockText) {
+    ctx.blockChunker.replace(nextText, 0, retainedPrefix);
+    return;
+  }
+  ctx.state.blockReplyScopeStart = {
+    contentIndex: restartIndex,
+    itemId: resolveAssistantStreamItemId({ contentIndex: restartIndex, message: next.message }),
+  };
+  ctx.blockChunker.reset([], restartPrefix.length);
+  ctx.blockChunker.append(next.blockText.slice(restartPrefix.length));
 }

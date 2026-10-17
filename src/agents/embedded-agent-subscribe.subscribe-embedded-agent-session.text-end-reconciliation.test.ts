@@ -169,9 +169,10 @@ describe("native snapshot reconciliation", () => {
     expect(h.onBlockReply).toHaveBeenCalledTimes(delivered.length);
   });
 
-  it("keeps native code continuation fenced across an unchanged checkpoint", async () => {
+  it("keeps native code continuation fenced after a shortened open-fence checkpoint", async () => {
     const h = setup({ blockReplyChunking: { minChars: 1, maxChars: 20 } });
-    const continuation = "qrstuvwxyz\n```";
+    const shortened = "```txt\nabc";
+    const continuation = "defghijklmnopqrstuvwxyz\n```";
     const firstChunk = "```txt\nabcdefghi\n```";
     h.start();
     let text = "";
@@ -181,21 +182,23 @@ describe("native snapshot reconciliation", () => {
     }
     await h.subscription.waitForPendingEvents();
     expect(h.texts()).toEqual([firstChunk]);
-    h.end([text], 0);
+    h.end([shortened], 0);
     await h.subscription.waitForPendingEvents();
-    h.delta([text, continuation], 1);
-    h.end([text, continuation], 1);
+    expect(h.texts()).toEqual([firstChunk]);
+    expect(h.onBlockReply).toHaveBeenCalledTimes(1);
+    h.delta([shortened, continuation], 1);
+    h.end([shortened, continuation], 1);
     await h.subscription.waitForPendingEvents();
     const delivered = h.texts();
     expect(delivered[0]).toBe(firstChunk);
-    const bodies = delivered.map((chunk) => {
+    const bodies = delivered.slice(1).map((chunk) => {
       expect(chunk.startsWith("```txt\n")).toBe(true);
       expect(chunk.endsWith("\n```")).toBe(true);
       expect(chunk.length).toBeLessThanOrEqual(20);
       return chunk.slice("```txt\n".length, -"\n```".length).replaceAll("\n", "");
     });
-    expect(bodies.join("")).toBe("abcdefghijklmnopqrstuvwxyz");
-    h.emit({ type: "message_end", message: assistant([text, continuation]) });
+    expect(bodies.join("")).toBe("defghijklmnopqrstuvwxyz");
+    h.emit({ type: "message_end", message: assistant([shortened, continuation]) });
     await h.subscription.waitForPendingEvents();
     expect(h.texts()).toEqual(delivered);
     expect(h.onBlockReply).toHaveBeenCalledTimes(delivered.length);

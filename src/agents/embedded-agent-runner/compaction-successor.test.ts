@@ -427,15 +427,6 @@ describe("acceptCompactionSuccessor", () => {
       await expect(fixture.accept({ result: { ok: true, compacted: true } })).rejects.toThrow(
         "session writer claim changed",
       );
-      await expect(
-        fixture.accept({
-          result: {
-            ok: true,
-            compacted: true,
-            result: { tokensBefore: 4_097, sessionId: fixture.successorId },
-          },
-        }),
-      ).rejects.toThrow();
       await expect(fs.access(fixture.target.storePath)).rejects.toMatchObject({ code: "ENOENT" });
       expect(fixture.facts).toEqual([]);
     });

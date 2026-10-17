@@ -2016,9 +2016,8 @@ describe("main-session-restart-recovery", () => {
     ).toEqual([`${sourceRunId}:user`, `${previousRecoveryRunId}:user`, `${dispatchedRunId}:user`]);
   });
 
-  it("schedules exact reservation cleanup after immediate retries are exhausted", async () => {
-    const scheduled = createDeferred();
-    const { sessionsDir, storePath, readEntry } = await makeMainSessionFixture();
+  it("retains the durable reservation when one-shot cleanup fails", async () => {
+    const { sessionsDir, readEntry } = await makeMainSessionFixture();
     await writeCompletedToolTranscript(sessionsDir);
     let dispatchFailed = false;
     vi.mocked(callGateway).mockImplementationOnce(async () => {
@@ -2028,12 +2027,12 @@ describe("main-session-restart-recovery", () => {
     const applySessionEntryReplacements = sessionAccessor.applySessionEntryReplacements;
     const schedulePendingSpy = vi
       .spyOn(recoveryOwnerRelease, "scheduleMainSessionRecoveryPendingTarget")
-      .mockImplementation(() => scheduled.resolve());
+      .mockImplementation(() => {});
     let cleanupFailures = 0;
     const replacementSpy = vi
       .spyOn(sessionAccessor, "applySessionEntryReplacements")
       .mockImplementation(async (params) => {
-        if (dispatchFailed && params.requireWriteSuccess && cleanupFailures < 3) {
+        if (dispatchFailed && params.requireWriteSuccess) {
           cleanupFailures += 1;
           throw new Error("extended session-store failure");
         }
@@ -2043,29 +2042,21 @@ describe("main-session-restart-recovery", () => {
     try {
       await expectRecovery({ started: 0, settled: 0, failed: 1, skipped: 0 }, {});
       expect(readEntry()?.mainRestartRecovery?.reservation).toBeDefined();
-      await scheduled.promise;
-      expect(readEntry()?.mainRestartRecovery?.reservation).toBeUndefined();
-      expect(schedulePendingSpy).toHaveBeenCalledWith({
-        agentId: "main",
-        sessionId: "main-session",
-        sessionKey: "agent:main:main",
-        storePath,
-      });
+      expect(schedulePendingSpy).not.toHaveBeenCalled();
     } finally {
       schedulePendingSpy.mockRestore();
       replacementSpy.mockRestore();
     }
 
-    expect(cleanupFailures).toBe(3);
+    expect(cleanupFailures).toBe(1);
     expect(readEntry()?.mainRestartRecovery).toMatchObject({ chargedAttempts: 1 });
   });
 
-  it("retries reservation cleanup when durable dispatch preparation is rejected", async () => {
+  it("refunds the reservation without dispatch when durable preparation is rejected", async () => {
     const { sessionsDir, readEntry } = await makeMainSessionFixture();
     await writeCompletedToolTranscript(sessionsDir);
     const applySessionEntryReplacements = sessionAccessor.applySessionEntryReplacements;
     let preparationRejected = false;
-    let cleanupFailures = 0;
     const replacementSpy = vi
       .spyOn(sessionAccessor, "applySessionEntryReplacements")
       .mockImplementation(async (params) => {
@@ -2078,10 +2069,6 @@ describe("main-session-restart-recovery", () => {
           preparationRejected = true;
           return false;
         }
-        if (preparationRejected && params.requireWriteSuccess && cleanupFailures < 2) {
-          cleanupFailures += 1;
-          throw new Error("transient session-store failure");
-        }
         return await applySessionEntryReplacements(params);
       });
 
@@ -2092,7 +2079,6 @@ describe("main-session-restart-recovery", () => {
     }
 
     expect(preparationRejected).toBe(true);
-    expect(cleanupFailures).toBe(2);
     expect(callGateway).not.toHaveBeenCalled();
     const entry = readEntry();
     expect(entry?.mainRestartRecovery).toMatchObject({ chargedAttempts: 0 });
