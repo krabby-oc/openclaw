@@ -40,6 +40,7 @@ import {
 import { createRetainedAgentDatabaseMatcher } from "../state/agent-deletion-discovery.js";
 import { AGENT_DELETION_RECOVERY_SOURCE_KEY } from "../state/agent-deletion-journal-recovery.kernel.js";
 import { completeAgentDeletionJournalInDatabase } from "../state/agent-deletion-journal.js";
+import { readAgentDeletionJournalStatusInWorker } from "../state/agent-deletion-journal.read.js";
 import { writeConfigMachineState } from "../state/config-machine-state-write.js";
 import {
   closeOpenClawAgentDatabasesForTest,
@@ -225,6 +226,7 @@ it("restores only the configured held store after explicit creation, never throu
     recovery.bytes,
   );
   expect(readAgentDeletionJournal("main", { env: state.env })).toBeUndefined();
+  expect(await readAgentDeletionJournalStatusInWorker("main", { env: state.env })).toBe("absent");
   expect(isAgentDeletionBlocked("main", { env: state.env })).toBe(false);
   for (const target of recovery.held.slice(0, 2)) {
     expect(openOpenClawAgentDatabase({ ...target, env: state.env }).path).toBe(target.path);
