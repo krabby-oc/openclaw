@@ -30,6 +30,7 @@ import {
   KEYBOARD_SHORTCUT_COMBOS,
   type KeyboardShortcutsDialogElement,
   matchesShortcutCombo,
+  resolveNewSessionShortcut,
 } from "../lib/keyboard-shortcut-contract.ts";
 import { isTerminalAvailable } from "../lib/terminal-availability.ts";
 import {
@@ -411,10 +412,7 @@ export class ShellChromeOwner {
       host.lazyCustomElements.close();
       return;
     }
-    if (this.palette.handlePendingShortcut(event)) {
-      return;
-    }
-    if (document.openClawModalLayers?.size) {
+    if (this.palette.handlePendingShortcut(event) || document.openClawModalLayers?.size) {
       return;
     }
     if (host.navDrawerOpen && isMobileNavLayout()) {
@@ -453,7 +451,7 @@ export class ShellChromeOwner {
     if (event.defaultPrevented) {
       return;
     }
-    if (matchesShortcutCombo(KEYBOARD_SHORTCUT_COMBOS.newSession, event)) {
+    if (matchesShortcutCombo(resolveNewSessionShortcut(), event)) {
       if (!event.repeat && openShellNewSession(this.host, "shortcut")) {
         event.preventDefault();
       }

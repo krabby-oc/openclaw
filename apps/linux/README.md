@@ -57,8 +57,9 @@ requirement.
 See [Desktop compatibility](https://docs.openclaw.ai/platforms/linux#desktop-compatibility)
 for package updates, desktop limitations, and native-app distinctions.
 
-New Session uses `Cmd+Shift+O` on macOS and `Ctrl+Shift+O` on Linux and Windows
-only while its dashboard is focused. Quick Chat keeps the separate global
+New Session uses `Cmd+N` on macOS and `Ctrl+N` on Linux and Windows
+only while its dashboard is focused. Web browsers keep `Cmd+Shift+O` or
+`Ctrl+Shift+O`. Quick Chat keeps the separate global
 `Cmd+Shift+Space` or `Ctrl+Shift+Space` shortcut, including when another app is
 in front.
 

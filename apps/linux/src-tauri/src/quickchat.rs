@@ -22,7 +22,7 @@ pub const QUICKCHAT_LABEL: &str = "quickchat";
 // Alt+Space is GNOME's window-menu grab; a second X11 grab for it always fails.
 pub const QUICKCHAT_SHORTCUT: &str = "CmdOrCtrl+Shift+Space";
 // The focused dashboard owns this chord; a global Quick Chat binding would steal it.
-const NEW_SESSION_SHORTCUT: &str = "CmdOrCtrl+Shift+O";
+const NEW_SESSION_SHORTCUT: &str = "CmdOrCtrl+N";
 const QUICKCHAT_SHORTCUT_FILE: &str = "quickchat-shortcut";
 const QUICKCHAT_SHORTCUT_DISABLED_MARKER: &str = "quickchat-shortcut-disabled";
 pub(crate) const QUICKCHAT_WIDTH: f64 = 640.0;
@@ -2305,7 +2305,7 @@ mod tests {
         let directory = test_directory("shortcut-reserved");
         fs::create_dir_all(&directory).expect("create test directory");
         let path = directory.join(QUICKCHAT_SHORTCUT_FILE);
-        fs::write(&path, "CmdOrCtrl+Shift+O").expect("write reserved shortcut");
+        fs::write(&path, "CmdOrCtrl+N").expect("write reserved shortcut");
 
         let loaded = shortcut_preference_from_path(&path);
         assert_eq!(loaded.accelerator, QUICKCHAT_SHORTCUT);
