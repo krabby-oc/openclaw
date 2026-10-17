@@ -210,7 +210,7 @@ export function registerGatewaySupersededReloadTests({
           await expect(reload).resolves.toBe("applied-restart-required");
         }
         expect(setState).toHaveBeenCalledOnce();
-        expect(handlers.hasOutstandingGatewayRestart()).toBe(recoveryRequired);
+        expect(handlers.hasOutstandingGatewayRestart()).toBe(recoveryRequired && !superseded);
       } finally {
         handlers.stopRestartRetries();
       }

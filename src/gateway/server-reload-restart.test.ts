@@ -86,6 +86,28 @@ afterEach(() => {
 });
 
 describe("gateway restart readiness preflight", () => {
+  it("distinguishes candidate preparation from an outstanding restart request", () => {
+    const coordinator = createCoordinator({
+      requestRecoveryRestart: vi.fn(() => ({ status: "emitted" as const })),
+    });
+    try {
+      const lifecycle = coordinator.beginGatewayRestartLifecycle();
+      expect(coordinator.hasOutstandingGatewayRestart()).toBe(false);
+      lifecycle.settle("committed");
+      expect(coordinator.hasOutstandingGatewayRestart()).toBe(false);
+
+      coordinator.pauseGatewayRestartForConfigCandidate();
+      expect(coordinator.hasOutstandingGatewayRestart()).toBe(false);
+
+      expect(coordinator.requestGatewayRestart(restartPlan, {}).status).toBe("accepted");
+      expect(coordinator.hasOutstandingGatewayRestart()).toBe(true);
+      coordinator.stopRestartRetries();
+      expect(coordinator.hasOutstandingGatewayRestart()).toBe(false);
+    } finally {
+      coordinator.stopRestartRetries();
+    }
+  });
+
   it("keeps the current lifecycle serving until an explicit request is restart-ready", async () => {
     const requestRecoveryRestart = vi.fn(() => ({ status: "emitted" as const }));
     const assertRestartReady = vi

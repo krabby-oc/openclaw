@@ -17,7 +17,10 @@ import type {
   GatewayRestartTransactionState,
 } from "./server-reload-contracts.js";
 
-type GatewayRestartOperation = { state: GatewayRestartTransactionState };
+type GatewayRestartOperation = {
+  kind: "lifecycle" | "request";
+  state: GatewayRestartTransactionState;
+};
 
 type GatewayRestartCoordinatorParams = Pick<
   GatewayReloadHandlerParams,
@@ -39,7 +42,7 @@ class GatewayRestartTransaction {
   private operation: GatewayRestartOperation | undefined;
 
   readonly appliedConfigHashPublisher = createAppliedConfigHashPublisher({
-    hasPendingRestart: () => this.operation !== undefined,
+    hasPendingRestart: () => this.operation?.kind === "request",
     publish: setRuntimeConfigAppliedHash,
   });
 
@@ -56,7 +59,7 @@ class GatewayRestartTransaction {
 
   beginLifecycle() {
     this.supersedeRequest();
-    const transaction: GatewayRestartOperation = { state: "pending" };
+    const transaction: GatewayRestartOperation = { kind: "lifecycle", state: "pending" };
     this.operation = transaction;
     return {
       settle: (state: Exclude<GatewayRestartTransactionState, "pending">) => {
@@ -78,7 +81,7 @@ class GatewayRestartTransaction {
       return { status: "recovery-pending", settle: () => {} };
     }
     this.supersedeRequest();
-    const transaction = { state: "pending" as GatewayRestartTransactionState };
+    const transaction: GatewayRestartOperation = { kind: "request", state: "pending" };
     this.operation = transaction;
     const accepted = this.requestForOperation(plan, nextConfig, transaction, options);
     return {
