@@ -347,33 +347,54 @@ describe("litellm plugin", () => {
       baseUrl: "https://litellm.example/v1",
       endpoint: "https://litellm.example/v1/models",
     },
-  ])("discovers models from the $name", async ({ providerKey = "litellm", baseUrl, endpoint }) => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
-      input === endpoint
-        ? Response.json({ object: "list", data: [{ id: "proxy-model", object: "model" }] })
-        : new Response("Not Found", { status: 404 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    const { providers } = await registerProviderPlugin({
-      plugin,
-      id: "litellm",
-      name: "LiteLLM Provider",
-    });
+    {
+      name: "mixed-case URL before a canonical row with a different version suffix",
+      providerKey: "LiteLLM",
+      baseUrl: "https://litellm.example/v1",
+      canonicalBaseUrl: "https://litellm.example",
+      endpoint: "https://litellm.example/v1/models",
+    },
+  ])(
+    "discovers models from the $name",
+    async ({ providerKey = "litellm", baseUrl, canonicalBaseUrl, endpoint }) => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
+        input === endpoint
+          ? Response.json({ object: "list", data: [{ id: "proxy-model", object: "model" }] })
+          : new Response("Not Found", { status: 404 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const { providers } = await registerProviderPlugin({
+        plugin,
+        id: "litellm",
+        name: "LiteLLM Provider",
+      });
 
-    const result = await runProviderCatalog({
-      provider: requireRegisteredProvider(providers, "litellm"),
-      config: baseUrl ? { models: { providers: { [providerKey]: { baseUrl, models: [] } } } } : {},
-      env: {},
-      resolveProviderApiKey: () => ({ apiKey: "LITELLM_API_KEY", discoveryApiKey: "sk-test" }),
-      resolveProviderAuth: () => ({ apiKey: undefined, mode: "none", source: "none" }),
-    });
+      const result = await runProviderCatalog({
+        provider: requireRegisteredProvider(providers, "litellm"),
+        config: baseUrl
+          ? {
+              models: {
+                providers: {
+                  [providerKey]: { baseUrl, models: [] },
+                  ...(canonicalBaseUrl
+                    ? { litellm: { baseUrl: canonicalBaseUrl, models: [] } }
+                    : {}),
+                },
+              },
+            }
+          : {},
+        env: {},
+        resolveProviderApiKey: () => ({ apiKey: "LITELLM_API_KEY", discoveryApiKey: "sk-test" }),
+        resolveProviderAuth: () => ({ apiKey: undefined, mode: "none", source: "none" }),
+      });
 
-    expect(fetchMock.mock.calls.map(([input]) => input)).toEqual([endpoint]);
-    expect(result).toMatchObject({
-      provider: { models: [expect.objectContaining({ id: "proxy-model" })] },
-      outcomes: [{ provider: "litellm", status: "ready" }],
-    });
-  });
+      expect(fetchMock.mock.calls.map(([input]) => input)).toEqual([endpoint]);
+      expect(result).toMatchObject({
+        provider: { models: [expect.objectContaining({ id: "proxy-model" })] },
+        outcomes: [{ provider: "litellm", status: "ready" }],
+      });
+    },
+  );
 
   it.each([
     {
