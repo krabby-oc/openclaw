@@ -66,7 +66,7 @@ it("keeps Layout hints aligned before and after panel styles load, and hidden on
           id: "terminal",
           label: "Terminal",
           icon: "terminal",
-          shortcut: { key: "`", modifiers: ["ctrl"] },
+          shortcut: { key: "Backquote", modifiers: ["ctrl"] },
           onActivate() {},
         },
         {
