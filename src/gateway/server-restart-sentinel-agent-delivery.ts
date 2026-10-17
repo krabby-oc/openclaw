@@ -9,6 +9,7 @@ import type { CliDeps } from "../cli/deps.types.js";
 import { createOutboundSendDeps } from "../cli/outbound-send-deps.js";
 import { getRuntimeConfig } from "../config/config.js";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
+import type { SessionDeliveryGeneration } from "../config/sessions/session-delivery-generation.types.js";
 import { withSessionEntryReadOnlyInWorker } from "../config/sessions/session-entry-read-runtime.js";
 import { sessionMatchesExpectedTranscriptTurn } from "../config/sessions/session-transcript-turn-state.js";
 import { appendAssistantMessageToSessionTranscript } from "../config/sessions/transcript.js";
@@ -88,9 +89,10 @@ async function sendQueuedGeneratedMedia(params: {
   canonicalKey: string;
   cfg: OpenClawConfig;
   deps: CliDeps;
+  sessionGeneration: SessionDeliveryGeneration;
   queueContext: OpenClawStateWorkerContext;
 }): Promise<void> {
-  const { entry, route, cfg } = params;
+  const { entry, route, cfg, sessionGeneration } = params;
   const deliveryIntentId = `${GENERATED_MEDIA_DELIVERY_COMPLETION_RETENTION.idPrefix}${entry.id}`;
   const deliveryQueueContext: DeliveryQueueStateContext = {
     stateDir: resolveStateDir(params.queueContext.environment),
@@ -119,6 +121,9 @@ async function sendQueuedGeneratedMedia(params: {
     },
     undefined,
     deliveryQueueContext,
+    // Outbound custody re-checks the requester before every platform send,
+    // including a recovery replay after the requester was reset or replaced.
+    sessionGeneration,
   );
   params.queueContext.admission.assertCurrent();
   if (result.status === "sent") {
@@ -126,7 +131,7 @@ async function sendQueuedGeneratedMedia(params: {
   }
   // A replayed intent sends nothing new; its durable receipt owns the outcome.
   const receipt = await inspectDeliveryQueueReceipt(
-    outboundDeliveryQueueName({}),
+    outboundDeliveryQueueName({ sessionGeneration }),
     deliveryIntentId,
     false,
     deliveryQueueContext,
@@ -417,12 +422,32 @@ export async function deliverQueuedGeneratedMediaCompletion(params: {
       });
     } else {
       assertRequesterAdmissionCurrent();
+      const sessionId = sessionEntry?.sessionId?.trim();
+      const sessionGeneration: SessionDeliveryGeneration | undefined =
+        binding ??
+        (sessionId
+          ? {
+              agentId: params.agentId,
+              storePath: params.storePath,
+              sessionKey: params.canonicalKey,
+              sessionId,
+              lifecycleRevision: sessionEntry?.lifecycleRevision ?? null,
+            }
+          : undefined);
+      if (!sessionGeneration) {
+        return await deadLetterSessionDelivery(
+          entry,
+          "queued generated-media delivery has no owning session",
+          params.queueContext,
+        );
+      }
       await sendQueuedGeneratedMedia({
         ...params,
         entry,
         route,
         mediaUrls,
         cfg: resolveConfig(),
+        sessionGeneration,
       });
     }
     await advanceSessionDeliveryAgentRun(

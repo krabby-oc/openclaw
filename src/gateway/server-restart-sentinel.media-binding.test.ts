@@ -294,6 +294,12 @@ describe("original requester media handoff", () => {
           await drain(entry.id);
           expect(await queue.loadPendingSessionDeliveries(queueContext)).toEqual([]);
           if (change === "current") {
+            // Outbound custody carries the requester so a replay cannot outlive it.
+            expect(send.mock.calls[0]?.[3]).toEqual({
+              ...scope,
+              sessionId: "original-requester",
+              lifecycleRevision: "original-lifecycle",
+            });
             expect(dispatch).toHaveBeenCalledOnce();
             expect(dispatch.mock.calls[0]?.[1]).toMatchObject({
               agentId: "main",
