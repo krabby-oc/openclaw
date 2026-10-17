@@ -370,11 +370,13 @@ src/infra/database-engine/json-values.ts
 src/infra/database-engine/observation.ts
 src/infra/database-engine/open.ts
 src/infra/database-engine/physical-facts.ts
+src/infra/database-engine/physical-store.ts
 src/infra/database-engine/policy.ts
 src/infra/database-engine/postgres-catalog.ts
 src/infra/database-engine/postgres-schema.ts
 src/infra/database-engine/postgres-search-schema.ts
 src/infra/database-engine/postgres-search.ts
+src/infra/database-engine/postgres-store-metadata.ts
 src/infra/database-engine/postgres-vector.ts
 src/infra/database-engine/registry.ts
 src/infra/database-engine/search-admission.ts
@@ -2003,6 +2005,8 @@ src/state/openclaw-state-lease-worker.ts
 src/state/openclaw-state-lease.ts
 src/state/openclaw-state-maintenance-context.ts
 src/state/openclaw-state-ownership.ts
+src/state/schema-migration-backup-scope.ts
+src/state/schema-migration-backup-tables.ts
 src/state/openclaw-state-ownership-preflight.ts
 src/state/openclaw-state-ownership-worker.ts
 src/state/openclaw-state-read-operation.ts
