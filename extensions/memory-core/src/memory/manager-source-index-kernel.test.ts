@@ -150,47 +150,6 @@ function snapshot() {
 }
 
 describe("memory source index native kernel", () => {
-  it("retains clean vectors without native writes, full scans, or schema probes", async () => {
-    const { value } = indexedSource(3);
-    const vectors = readVectors();
-    const first = value.chunks[0];
-    assert.ok(first);
-    first.importance = 9;
-    first.provenance = { originClass: "agent", sessionKind: "interactive", observedAt: 110 };
-    const statements = observeHostDataSql();
-    conn.setAuthorizer((action, table) =>
-      (action === constants.SQLITE_INSERT || action === constants.SQLITE_DELETE) &&
-      table === "memory_index_chunks_vec_rowids"
-        ? constants.SQLITE_DENY
-        : constants.SQLITE_OK,
-    );
-    try {
-      write({ ...value, now: 200 });
-    } finally {
-      conn.setAuthorizer(null);
-      statements.restore();
-    }
-    expect(statements.queries.filter((sql) => /sqlite_(?:schema|master)/i.test(sql))).toEqual([]);
-    const lookups = statements.queries.filter((sql) =>
-      /^SELECT .*FROM memory_index_chunks_vec\b/i.test(sql),
-    );
-    expect(lookups.length).toBeGreaterThan(0);
-    for (const sql of lookups) {
-      expect(queryPlan(sql, ["unused"])).toEqual(
-        queryPlan("SELECT id FROM memory_index_chunks_vec WHERE id = ?", ["unused"]),
-      );
-    }
-    expect(readVectors()).toEqual(vectors);
-    expect(
-      conn
-        .prepare("SELECT importance FROM memory_index_chunk_recall_metadata WHERE chunk_id = ?")
-        .get(memoryChunkRowId(value.source, value.entry.path, first, value.model)),
-    ).toEqual({ importance: 9 });
-    expect(select("chunks", "DISTINCT updated_at", "WHERE path = ?").all(value.entry.path)).toEqual(
-      [{ updated_at: 200 }],
-    );
-  });
-
   it("repairs changed and missing vectors, appends chunks, and removes empty and stale vectors", async () => {
     const { value } = indexedSource(4);
     const ids = value.chunks.map((chunk) =>
@@ -245,8 +204,8 @@ describe("memory source index native kernel", () => {
       } finally {
         statements.restore();
       }
-      // The new vector writer first deletes its own ID before inserting it.
-      expect(executions).toBe(Number(append) + (staleCount <= 32 ? staleCount : 1));
+      // Explicit embeddings replace their vectors before stale IDs are removed.
+      expect(executions).toBe(1 + Number(append) + (staleCount <= 32 ? staleCount : 1));
       const expected = [...expectedVectors(next), ...expectedVectors(sibling)].toSorted((a, b) =>
         a.id.localeCompare(b.id),
       );
@@ -261,7 +220,7 @@ describe("memory source index native kernel", () => {
     async (chunks) => {
       const { value } = indexedSource(chunks);
       const vectors = select("chunks_vec", "id", "ORDER BY id").all();
-      const deletes = interruptVectorDeletes(2);
+      const deletes = interruptVectorDeletes(4);
       try {
         write({
           ...value,
@@ -271,7 +230,7 @@ describe("memory source index native kernel", () => {
       } finally {
         conn.setAuthorizer(null);
       }
-      expect(deletes()).toBe(2);
+      expect(deletes()).toBe(4);
       expect(select("chunks_vec", "id", "ORDER BY id").all()).toEqual(vectors);
       expect(select("chunks", "count(*) AS n").get()).toEqual({ n: 3 });
       expect(readDebt()).toEqual({ value: "1" });

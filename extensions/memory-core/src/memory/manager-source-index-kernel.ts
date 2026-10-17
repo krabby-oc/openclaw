@@ -1,10 +1,6 @@
 import { sql } from "kysely";
 import type { EngineConnection } from "openclaw/plugin-sdk/database-engine-worker-runtime";
-import {
-  encodeMemoryEmbedding,
-  hashText,
-  type MemorySource,
-} from "openclaw/plugin-sdk/memory-core-host-engine-indexing";
+import { hashText, type MemorySource } from "openclaw/plugin-sdk/memory-core-host-engine-indexing";
 import { isPostgresSqlConnection } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import {
   executeSqliteQuerySync,
@@ -249,59 +245,35 @@ export class MemorySourceIndexKernel {
     if (!delta && !reuse) {
       this.clear(entry.path, source);
     }
-    let findVector: ((id: string) => boolean) | undefined;
     let batch: MemoryChunkWrite[] = [];
     let removedIds: string[] = [];
     let hasEmbeddings = false;
     const flush = (defer = false) => {
       this.deleteIds(entry.path, source, removedIds);
       removedIds = [];
-      // Decide from the last row for each ID before writing relational rows.
-      // A repeated ID can change and then return to its original embedding.
-      const reusable = new Set<string>();
-      let vectors = [
-        ...new Map(
-          batch.flatMap((row) =>
-            row.embedding === undefined
-              ? []
-              : [[row.id, { id: row.id, embedding: row.embedding }] as const],
-          ),
-        ).values(),
-      ].filter((row) => {
-        if (!reuse) {
-          return row.embedding.length > 0;
-        }
-        if (this.search) {
-          findVector ??= this.search.capability.prepareExists(this.search.index);
-        }
-        if (findVector && !findVector(row.id)) {
-          return row.embedding.length > 0;
-        }
-        if (row.embedding.length === 0) {
-          this.deleteVectors(entry.path, source, [row.id]);
-          return false;
-        }
-        reusable.add(row.id);
-        return true;
-      });
-      if (reusable.size > 0) {
-        const previousEmbeddings = new Map(
-          executeSqliteQuerySync(
-            this.database,
-            db
-              .selectFrom("memory_index_chunks")
-              .select(["id", "embedding"])
-              .where("id", "in", [...reusable]),
-          ).rows.map((row) => [row.id, row.embedding]),
-        );
-        vectors = vectors.filter((row) => {
-          const old = previousEmbeddings.get(row.id);
-          return !old || !Buffer.from(old).equals(encodeMemoryEmbedding(row.embedding));
-        });
-      }
       writeRows(batch, defer);
       if (vectorReady && this.search) {
-        this.search.capability.write(this.search.index, vectors);
+        // Explicit embeddings are authoritative; PostgreSQL owns its projection.
+        const vectors = [
+          ...new Map(
+            batch.flatMap((row) =>
+              row.embedding === undefined
+                ? []
+                : [[row.id, { id: row.id, embedding: row.embedding }] as const],
+            ),
+          ).values(),
+        ];
+        if (reuse) {
+          this.deleteVectors(
+            entry.path,
+            source,
+            vectors.filter((row) => row.embedding.length === 0).map((row) => row.id),
+          );
+        }
+        this.search.capability.write(
+          this.search.index,
+          vectors.filter((row) => row.embedding.length > 0),
+        );
       }
       batch = [];
     };
@@ -397,7 +369,7 @@ export class MemorySourceIndexKernel {
     cleanup: "session-delta" | "complete-replacement" = "session-delta",
   ): void {
     const search = this.search;
-    if (!search) {
+    if (!search || ids?.length === 0) {
       return;
     }
     if (!(this.state.hasVectorTable ?? this.state.vector.available === true)) {
