@@ -63,4 +63,20 @@ describe("Blobster renderer", () => {
     ).toThrow();
     expect(() => renderBlobster({ ...plain, bounds: [0, 0, 1, 1] })).toThrow();
   });
+
+  it("keeps the Blobster silhouette when a small model draws a full-canvas backdrop and outfit", () => {
+    const { svg } = renderBlobster({
+      ...plain,
+      layers: {
+        ...plain.layers,
+        back: '<rect x="-12" y="-18" width="144" height="144" fill="#ff0000"/>',
+        shell_overlay: '<rect x="16" y="8" width="88" height="96" fill="#0000ff"/>',
+      },
+    });
+    expect(svg).not.toContain("#ff0000");
+    expect(svg).toContain('<clipPath id="blobster-body-clip">');
+    expect(svg).toContain(
+      '<g clip-path="url(#blobster-body-clip)"><rect x="16" y="8" width="88" height="96" fill="#0000ff"></rect></g>',
+    );
+  });
 });

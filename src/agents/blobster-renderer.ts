@@ -169,16 +169,16 @@ export function renderBlobster(input: unknown): { name: string; description: str
   const design = blobsterDesignSchema.parse(input);
   const layers = Object.fromEntries(LAYERS.map((key) => [key, renderFragment(design.layers[key])]));
   const { shell, claw, glint } = design.palette;
-  // A fixed square protects tiny-avatar scale and keeps the canonical body visible.
+  // Fixed clipping keeps weak model output from turning the tiny avatar into a square.
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="-12 -18 144 144" role="img">
 <metadata>${escapeXml(LICENSE)}</metadata>
 <title>${escapeXml(design.name)}</title><desc>${escapeXml(design.description)}</desc>
-<g>${layers.back}</g>
+<defs><clipPath id="blobster-body-clip"><path d="${BODY}"/></clipPath></defs>
 <g stroke="${shell}" stroke-width="4" stroke-linecap="round" fill="none"><path d="M46 14 Q38 4 31 7"/><path d="M74 14 Q82 4 89 7"/></g>
 <g>${layers.left_prop}<path d="${LEFT}" fill="${claw}"/></g>
 <g>${layers.right_prop}<path d="${RIGHT}" fill="${claw}"/></g>
 <path d="${BODY}" fill="${shell}"/>
-<g>${layers.shell_overlay}</g>
+<g clip-path="url(#blobster-body-clip)">${layers.shell_overlay}</g>
 <ellipse cx="48" cy="28" rx="20" ry="11" fill="#ffffff" opacity="0.1"/>
 <g>${layers.accessory}</g>
 <g><circle cx="45" cy="32" r="5.5" fill="#0a1014"/><circle cx="75" cy="32" r="5.5" fill="#0a1014"/><circle cx="46.5" cy="30.5" r="2.2" fill="${glint}"/><circle cx="76.5" cy="30.5" r="2.2" fill="${glint}"/></g>
