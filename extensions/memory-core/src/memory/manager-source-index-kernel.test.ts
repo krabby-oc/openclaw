@@ -493,6 +493,12 @@ describe("memory source index native kernel", () => {
     const database = await createDatabase();
     const values = Array.from({ length: 8 }, (_, index): MemorySourceIndexReplacement => {
       const value = replacement(`memory/group-${index}.md`, `topic${index}`);
+      for (const chunk of value.chunks) {
+        chunk.importance = index + 1;
+        chunk.triggers = `trigger-${index}`;
+        chunk.projectKey = `project-${index}`;
+        chunk.provenance = undefined;
+      }
       return {
         ...value,
         ...(index % 2 === 0
@@ -500,13 +506,6 @@ describe("memory source index native kernel", () => {
           : { source: "sessions" as const, agentId: "main", sessionId: `session-${index}` }),
         model: `model-${index}`,
         now: 200 + index,
-        chunks: value.chunks.map((chunk) => ({
-          ...chunk,
-          importance: index + 1,
-          triggers: `trigger-${index}`,
-          projectKey: `project-${index}`,
-          provenance: undefined,
-        })),
       };
     });
     let inserts = 0;
