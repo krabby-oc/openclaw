@@ -16,6 +16,7 @@ import {
   retireSessionControllerInput,
   retireSessionControllerSourceCancellation,
 } from "./session-controller.mailbox.js";
+import { createReplyOperation } from "./session-controller.operation.js";
 import {
   captureSessionControllerStop,
   captureSessionControllerStopCandidates,
@@ -55,6 +56,72 @@ const policyCases = [
 >;
 
 describe("captured session Stop", () => {
+  it("leaves a replacement operation running when Stop names an older incarnation", async () => {
+    const f = fixture();
+    const replacementId = randomUUID();
+    const operation = createReplyOperation({
+      sessionKey: f.sessionKey,
+      sessionId: replacementId,
+      resetTriggered: false,
+      target: captureSessionTarget({ ...f.target, incarnation: replacementId }),
+    });
+    try {
+      const outcome = await stopSession({
+        source: "restart",
+        capture: captureSessionControllerStop({ targets: [f.target] }),
+      }).completed;
+      expect(outcome).toMatchObject({ aborted: false, activeCancelled: 0 });
+      expect(operation.abortSignal.aborted).toBe(false);
+    } finally {
+      operation.complete();
+      await operation.ownerSettlement;
+    }
+  });
+
+  it("leaves a replacement native input running when Stop names an older incarnation", async () => {
+    const f = fixture();
+    const input = reserveSessionControllerSource(f.sessionKey, {
+      target: captureSessionTarget({ ...f.target, incarnation: randomUUID() }),
+      policy: { mode: "followup" },
+    });
+    const injection = beginSessionControllerSourceInjection(input);
+    expect(await injection.admit()).toBe(true);
+    try {
+      const outcome = await stopSession({
+        source: "restart",
+        capture: captureSessionControllerStop({ targets: [f.target] }),
+      }).completed;
+      expect(outcome).toMatchObject({ aborted: false, activeCancelled: 0 });
+      expect(input.abortSignal.aborted).toBe(false);
+    } finally {
+      injection.finish(false);
+      retireSessionControllerInput(input);
+      await input.settlement.promise;
+    }
+  });
+
+  it("still stops an operation through an incarnation it owns after rollover", async () => {
+    const f = fixture();
+    const operation = createReplyOperation({
+      sessionKey: f.sessionKey,
+      sessionId: f.sessionId,
+      resetTriggered: false,
+      target: f.target,
+    });
+    operation.updateSessionId(randomUUID());
+    try {
+      const outcome = await stopSession({
+        source: "restart",
+        capture: captureSessionControllerStop({ targets: [f.target] }),
+      }).completed;
+      expect(outcome).toMatchObject({ aborted: true, activeCancelled: 1 });
+      expect(operation.abortSignal.aborted).toBe(true);
+    } finally {
+      operation.complete();
+      await operation.ownerSettlement;
+    }
+  });
+
   it("cancels scoped runless effects without waiting for their producer release", async () => {
     const f = fixture();
     const gateway = () => undefined;

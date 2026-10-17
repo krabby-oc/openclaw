@@ -203,7 +203,12 @@ export function resolveRequesterRecoveryDelivery(
   if (hasRestartRecoverySourceClaim(entry, runId)) {
     return {
       kind: "delivery",
-      delivery: { delivered: false, path: "direct", disposition: "session_queued" },
+      delivery: {
+        delivered: false,
+        path: "direct",
+        reason: "requester_turn_pending",
+        disposition: "session_queued",
+      },
     };
   }
   if (hasRestartRecoveryTerminalRun(entry, runId)) {

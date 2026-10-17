@@ -193,6 +193,40 @@ export function registerLifecycleDeliveryReceiptCases({
 
   it.each([
     {
+      name: "persists phase-only completion failure and steer-drop diagnostics",
+      delivery: {
+        delivered: false as const,
+        path: "none" as const,
+        phases: [
+          {
+            phase: "direct-primary" as const,
+            delivered: false,
+            path: "direct" as const,
+            error: "primary refused",
+          },
+          {
+            phase: "steer-fallback" as const,
+            delivered: false,
+            path: "none" as const,
+            reason: "steer_dropped" as const,
+            error: "steer refused",
+          },
+        ],
+      },
+      lastDropReason: "steer_dropped",
+      lastError: "direct-primary: primary refused; steer-fallback: steer refused",
+    },
+    {
+      name: "persists a direct steer-drop reason without rewriting it as sink_unavailable",
+      delivery: {
+        delivered: false as const,
+        path: "none" as const,
+        reason: "steer_dropped" as const,
+      },
+      lastDropReason: "steer_dropped",
+      lastError: "steer_dropped",
+    },
+    {
       name: "persists sink_unavailable when announce mapping reports no viable requester",
       delivery: {
         delivered: false as const,

@@ -48,6 +48,20 @@ function isStandaloneStopEffect(
   );
 }
 
+function inputMatchesStopIncarnation(input: SessionControllerInput, incarnation?: string): boolean {
+  if (incarnation === undefined) {
+    return true;
+  }
+  const operation = input.claim?.operation;
+  if (operation) {
+    return operation.hasOwnedSessionId(incarnation);
+  }
+  return (
+    (input.sourceSessionId ?? input.source?.run.sessionId ?? input.target?.incarnation) ===
+    incarnation
+  );
+}
+
 /** The scope adapter resolves/authorizes targets; this owner captures instances before it yields. */
 export function captureSessionControllerStop(params: {
   inputs?: Iterable<SessionControllerInput>;
@@ -94,11 +108,20 @@ export function captureSessionControllerStop(params: {
       }
     }
     for (const owner of findSessionControllerEntries(target.sessionKey, target)) {
-      if (params.includeActive !== false && owner.active && matchesGateway(owner.active)) {
+      if (
+        params.includeActive !== false &&
+        owner.active &&
+        matchesGateway(owner.active) &&
+        (target.incarnation === undefined || owner.active.hasOwnedSessionId(target.incarnation))
+      ) {
         operations.add(owner.active);
       }
       for (const input of owner.mailbox?.entries ?? []) {
-        if (input.phase === "consumed" || !matchesGateway(input)) {
+        if (
+          input.phase === "consumed" ||
+          !matchesGateway(input) ||
+          !inputMatchesStopIncarnation(input, target.incarnation)
+        ) {
           continue;
         }
         const active = input.claim !== undefined || input.phase === "injecting";
@@ -179,8 +202,6 @@ export function captureSessionControllerStop(params: {
             const identity = input.target;
             const agentId = input.source?.run.agentId ?? identity?.agentId;
             const sessionKey = input.source?.run.sessionKey ?? identity?.sessionKey;
-            const sessionId =
-              input.sourceSessionId ?? input.source?.run.sessionId ?? identity?.incarnation;
             if (
               isPending(input) &&
               matchesGateway(input) &&
@@ -189,7 +210,7 @@ export function captureSessionControllerStop(params: {
               target.aliases.includes(sessionKey) &&
               (!target.agentId ||
                 (agentId && normalizeAgentId(agentId) === normalizeAgentId(target.agentId))) &&
-              (target.incarnation === undefined || sessionId === target.incarnation)
+              inputMatchesStopIncarnation(input, target.incarnation)
             ) {
               pending.add(input);
             }

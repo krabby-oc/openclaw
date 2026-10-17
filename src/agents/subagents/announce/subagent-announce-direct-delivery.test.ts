@@ -154,6 +154,81 @@ describe("late exact requester recovery", () => {
     };
   }
 
+  it.each([false, true])(
+    "honors requireDirectDelivery=%s without replacing controller custody",
+    async (requireDirectDelivery) => {
+      const fixture = setup();
+      const target = captureSessionTarget({
+        storeScope: "/synthetic/requester-recovery/sessions.json",
+        sessionKey,
+        agentId: "main",
+        incarnation: fixture.state.entry.sessionId,
+      });
+      const operation = createReplyOperation({
+        sessionKey,
+        sessionId: fixture.state.entry.sessionId,
+        resetTriggered: false,
+        target,
+      });
+      operation.setPhase("running");
+      const queueMessage = vi.fn<ReplyBackendMessageInjectionV2["queueMessage"]>(
+        async (_text, options, assertCurrent) => {
+          assertCurrent();
+          options?.onQueueAccepted?.(true);
+        },
+      );
+      operation.attachBackend({
+        kind: "embedded",
+        cancel() {},
+        supportsTranscriptCommitWait: true,
+        messageInjectionV2: { version: 2, isAvailable: () => true, queueMessage },
+      });
+      const input = reserveSessionControllerSource(sessionKey, {
+        target,
+        policy: { mode: "steer" },
+      });
+      onTestFinished(() => {
+        operation.complete();
+        retireSessionControllerInput(input);
+        clearSessionControllerMailbox(input.mailbox, () => {});
+      });
+      fixture.state.active = true;
+      fixture.dispatchDone.resolve({
+        status: "ok",
+        result: { payloads: [{ text: "Completed directly" }], deliveryStatus: sentDeliveryStatus },
+      });
+      const result = await deliverSubagentAnnouncement({
+        ...fixture.params,
+        sourceTool: "subagent_announce",
+        expectsCompletionMessage: true,
+        controllerInput: input,
+        requireDirectDelivery,
+      });
+      expect(result).toMatchObject({
+        delivered: true,
+        path: requireDirectDelivery ? "direct" : "steered",
+      });
+      expect(queueMessage).toHaveBeenCalledTimes(requireDirectDelivery ? 0 : 1);
+      expect(fixture.dispatch).toHaveBeenCalledTimes(requireDirectDelivery ? 1 : 0);
+      if (requireDirectDelivery) {
+        expect(fixture.dispatch.mock.calls[0]?.[2]?.controllerInput).toBe(input);
+      }
+    },
+  );
+
+  it("preserves the pending requester reason for a settle response", async () => {
+    const fixture = setup();
+    fixture.dispatchDone.resolve({ status: "accepted", runId: "pending-requester" });
+    await expect(fixture.startDelivery()).resolves.toMatchObject({
+      delivered: false,
+      path: "direct",
+      reason: "requester_turn_pending",
+      disposition: "session_queued",
+    });
+    expect(fixture.dispatch).toHaveBeenCalledOnce();
+    expect(fixture.send).not.toHaveBeenCalled();
+  });
+
   it.each([
     { outcome: "accepted", change: "admission" },
     { outcome: "indeterminate", change: "admission" },
@@ -260,6 +335,7 @@ describe("late exact requester recovery", () => {
       });
       await expect(fixture.startDelivery()).resolves.toMatchObject({
         delivered: false,
+        reason: "requester_turn_pending",
         disposition: "session_queued",
       });
       expect(fixture.dispatch).not.toHaveBeenCalled();
@@ -407,7 +483,7 @@ describe("late exact requester recovery", () => {
           restartRecoveryDeliverySourceRunId: sourceRunId,
           restartRecoveryDeliveryRunId: "successor",
         },
-        reason: undefined,
+        reason: "requester_turn_pending",
         disposition: "session_queued",
       },
       {

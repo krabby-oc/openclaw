@@ -628,7 +628,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
     {
       name: "accepted",
       response: { status: "accepted", runId: "pending" },
-      expected: { path: "direct", disposition: "session_queued" },
+      expected: { path: "direct", reason: "requester_turn_pending", disposition: "session_queued" },
     },
     {
       name: "error",

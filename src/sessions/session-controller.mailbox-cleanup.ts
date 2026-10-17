@@ -4,7 +4,6 @@ import { getGatewayRestartDrainSignal } from "../process/gateway-work-admission.
 import { defaultRuntime } from "../runtime.js";
 import { isCurrentSessionControllerTurnInput } from "./session-controller.context.js";
 import {
-  inputCancellation,
   abortSessionControllerInput,
   completeSessionControllerSourceLifecycle,
   retireSessionControllerInput,
@@ -139,7 +138,7 @@ export function clearSessionControllerMailbox(
       }
       input.retirementRequested = true;
       try {
-        if (capturedInputs && !input.withdrawalHolds) {
+        if (!input.withdrawalHolds) {
           abortSessionControllerInput(input, new Error("Session mailbox cleared"), assertCurrent);
         }
         for (const [source, capturedInput] of sources) {
@@ -147,11 +146,6 @@ export function clearSessionControllerMailbox(
             sources.delete(source);
             settle(source, capturedInput);
           }
-        }
-        // Durable discard retains its exact source until commit/release.
-        if (!input.withdrawalHolds && !input.abortSignal.aborted) {
-          assertCurrent();
-          input[inputCancellation].abort(new Error("Session mailbox cleared"));
         }
       } finally {
         // Cleanup of a committed cancellation keeps its original source custody.

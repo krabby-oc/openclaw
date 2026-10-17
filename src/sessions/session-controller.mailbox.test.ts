@@ -4,6 +4,10 @@ import { createQueueTestRun } from "../auto-reply/reply/queue.test-helpers.js";
 import { reserveSteerCandidate, enqueueFollowupRun } from "../auto-reply/reply/queue/enqueue.js";
 import { admitFollowupRunLifecycle } from "../auto-reply/reply/queue/lifecycle.js";
 import { clearFollowupQueue } from "../auto-reply/reply/queue/state.js";
+import {
+  areDiagnosticsEnabledForProcess,
+  setDiagnosticsEnabledForProcess,
+} from "../infra/diagnostic-events.js";
 import { diagnosticLogger } from "../logging/diagnostic-runtime.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { deferSessionControllerClaimBeforeExecution } from "./session-controller.mailbox-claim.js";
@@ -225,28 +229,40 @@ describe("controller mailbox scheduling", () => {
     using enabled = vi.spyOn(diagnosticLogger, "isEnabled");
     enabled.mockReturnValue(true);
     using phases = vi.spyOn(diagnosticLogger, "info").mockImplementation(() => undefined);
-    const first = reserveSessionControllerSource(key, { policy: { mode: "followup" } });
-    const second = reserveSessionControllerSource(key, { policy: { mode: "followup" } });
-    expect(tryClaimSessionControllerTask(second)).toBeUndefined();
-    const firstClaim = tryClaimSessionControllerTask(first);
-    expect(firstClaim?.inputs).toEqual([first]);
-    expect(tryClaimSessionControllerTask(second)).toBeUndefined();
-    releaseSessionControllerClaim(firstClaim!);
-    await firstClaim!.settlement.promise;
-    const secondClaim = await claimSessionControllerTask(second, () => {});
-    expect(secondClaim.inputs).toEqual([second]);
-    expect(
-      phases.mock.calls
-        .filter(
-          ([message, details]) =>
-            message === "session controller phase" &&
-            details?.phase === "source-claim" &&
-            details.sourceId === second.instance.id,
-        )
-        .map(([, details]) => details?.status),
-    ).toEqual(["waiting", "selected"]);
-    releaseSessionControllerClaim(secondClaim);
-    await secondClaim.settlement.promise;
+    const diagnosticsWereEnabled = areDiagnosticsEnabledForProcess();
+    let firstClaim: ReturnType<typeof tryClaimSessionControllerTask>;
+    let secondClaim: ReturnType<typeof tryClaimSessionControllerTask>;
+    setDiagnosticsEnabledForProcess(true);
+    try {
+      const first = reserveSessionControllerSource(key, { policy: { mode: "followup" } });
+      const second = reserveSessionControllerSource(key, { policy: { mode: "followup" } });
+      expect(tryClaimSessionControllerTask(second)).toBeUndefined();
+      firstClaim = tryClaimSessionControllerTask(first);
+      expect(firstClaim?.inputs).toEqual([first]);
+      expect(tryClaimSessionControllerTask(second)).toBeUndefined();
+      releaseSessionControllerClaim(firstClaim!);
+      await firstClaim!.settlement.promise;
+      secondClaim = await claimSessionControllerTask(second, () => {});
+      expect(secondClaim.inputs).toEqual([second]);
+      expect(
+        phases.mock.calls
+          .filter(
+            ([message, details]) =>
+              message === "session controller phase" && details?.phase === "source-claim",
+          )
+          .map(([, details]) => details?.status),
+      ).toEqual(["selected", "waiting", "selected"]);
+    } finally {
+      try {
+        const claims = [firstClaim, secondClaim].filter((claim) => claim !== undefined);
+        for (const claim of claims) {
+          releaseSessionControllerClaim(claim);
+        }
+        await Promise.all(claims.map((claim) => claim.settlement.promise));
+      } finally {
+        setDiagnosticsEnabledForProcess(diagnosticsWereEnabled);
+      }
+    }
     expect(findSessionControllerEntry(key)).toBeUndefined();
   });
   it("reserves interrupt D before A settles, then keeps B,C in original order", async () => {

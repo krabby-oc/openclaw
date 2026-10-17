@@ -84,6 +84,7 @@ export type SubagentAnnounceDirectParams = {
   completionRequesterSessionId?: string;
   completionRequesterLifecycleRevision?: string;
   requireVisibleReply?: boolean;
+  requireDirectDelivery?: boolean;
   bestEffortDeliver?: boolean;
   directIdempotencyKey: string;
   completionDirectOrigin?: DeliveryContext;
@@ -333,6 +334,7 @@ async function sendSubagentAnnounceDirectlyBound(
     if (
       !recoveredResult &&
       !parentOnly &&
+      !params.requireDirectDelivery &&
       params.expectsCompletionMessage &&
       params.controllerInput
     ) {

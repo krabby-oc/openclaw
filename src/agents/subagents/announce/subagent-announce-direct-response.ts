@@ -81,7 +81,12 @@ export function createDirectAnnounceResponseClassifier(context: DirectAnnounceRe
   ): SubagentAnnounceDeliveryResult | Promise<SubagentAnnounceDeliveryResult> => {
     if (isGatewayAgentRunPending(directAnnounceResponse)) {
       return parentOnly || params.sourceTool === "subagent_settle"
-        ? { delivered: false, path: "direct", disposition: "session_queued" }
+        ? {
+            delivered: false,
+            path: "direct",
+            reason: "requester_turn_pending",
+            disposition: "session_queued",
+          }
         : { delivered: true, path: "direct" };
     }
 
