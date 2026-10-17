@@ -277,10 +277,13 @@ export abstract class MemoryManagerSyncOps extends MemoryManagerSourceSyncOps {
       ) {
         // Validate the full legacy identity before retiring its credential-dependent key.
         const database = this.database;
-        await database.updateIndexStructure(
+        const upgraded = await database.updateIndexStructure(
           { type: "index.upgradeProviderKey", input: { meta, providerKey: syncProviderKey } },
           () => this.assertDatabaseMutationCurrent(database),
         );
+        if (!upgraded) {
+          return MEMORY_SYNC_DEFERRED;
+        }
       }
       if (hasTargetSessionRequest && !hasTargetArchiveFiles) {
         return;
