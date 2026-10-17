@@ -25,6 +25,16 @@ const mocks = vi.hoisted(() => ({
   readConfigFileSnapshot: vi.fn(),
   resolveStatusRuntimeSnapshot: vi.fn(),
   resolveStatusUsageSummary: vi.fn(),
+  resolveStatusDatabaseEngines: vi.fn(async () => ({
+    source: "unavailable",
+    stores: [],
+    reason: "Physical store inspection unavailable in fixture.",
+  })),
+}));
+
+// mock-isolation: Runtime composition consumes the inspector's result without opening stores.
+vi.mock("./status-database-engines.js", () => ({
+  resolveStatusDatabaseEngines: mocks.resolveStatusDatabaseEngines,
 }));
 
 // mock-isolation: Keep config I/O out of this fixture while exercising the real snapshot owner.
@@ -129,6 +139,12 @@ describe("status-json-runtime", () => {
     );
     expect(mocks.readConfigFileSnapshot).not.toHaveBeenCalled();
     expect(requireStatusPayloadInput().securityAudit).toMatchObject({ collected: false });
+    expect(requireStatusPayloadInput().surface.databaseEngines).toEqual({
+      source: "unavailable",
+      stores: [],
+      reason: "Physical store inspection unavailable in fixture.",
+    });
+    expect(mocks.resolveStatusDatabaseEngines).toHaveBeenCalledOnce();
     expect(result.pluginCompatibility).toEqual({
       count: 0,
       warnings: [],
@@ -212,6 +228,12 @@ describe("status-json-runtime", () => {
     expect(payloadInput.surface.gatewayProbeAuth).toStrictEqual({ token: "tok" });
     expect(payloadInput.surface.gatewayService).toStrictEqual({ label: "LaunchAgent" });
     expect(payloadInput.surface.nodeService).toStrictEqual({ label: "node" });
+    expect(payloadInput.surface.databaseEngines).toStrictEqual({
+      source: "unavailable",
+      stores: [],
+      reason: "Physical store inspection unavailable in fixture.",
+    });
+    expect(mocks.resolveStatusDatabaseEngines).toHaveBeenCalledOnce();
     expect(payloadInput.securityAudit).toStrictEqual({ summary: { critical: 1 } });
     expect(payloadInput.usage).toStrictEqual({ providers: [] });
     expect(payloadInput.health).toStrictEqual({ ok: true });
