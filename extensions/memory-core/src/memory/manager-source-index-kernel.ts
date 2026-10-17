@@ -171,7 +171,51 @@ export class MemorySourceIndexKernel {
   }
 
   replaceRows(params: MemorySourceIndexHeader, rows: Iterable<MemorySourceIndexRow>): void {
+    this.replaceGroup([{ header: params, rows }]);
+  }
+
+  replaceGroup(
+    sources: Iterable<{ header: MemorySourceIndexHeader; rows: Iterable<MemorySourceIndexRow> }>,
+  ): void {
+    let pending: MemoryChunkWrite[] = [];
+    const pendingSources = new Set<string>();
+    const flush = () => {
+      writeMemoryChunks(this.database, pending);
+      pending = [];
+      pendingSources.clear();
+    };
+    const writeRows = (rows: MemoryChunkWrite[], defer: boolean) => {
+      // Only final tails can wait; later rows must observe intermediate writes.
+      if (!defer) {
+        flush();
+        writeMemoryChunks(this.database, rows);
+        return;
+      }
+      for (const row of rows) {
+        pending.push(row);
+        pendingSources.add(`${row.context.source}:${row.context.path}`);
+        if (pending.length === SOURCE_WRITE_BATCH_SIZE) {
+          flush();
+        }
+      }
+    };
+    for (const { header, rows } of sources) {
+      // A repeated source must observe its earlier replacement in this group.
+      if (pendingSources.has(`${header.source}:${header.entry.path}`)) {
+        flush();
+      }
+      this.replaceSourceRows(header, rows, writeRows);
+    }
+    flush();
+  }
+
+  private replaceSourceRows(
+    params: MemorySourceIndexHeader,
+    rows: Iterable<MemorySourceIndexRow>,
+    writeRows: (rows: MemoryChunkWrite[], defer: boolean) => void,
+  ): void {
     const { entry, source, model, now, vectorReady } = params;
+    const context = { path: entry.path, source, model, now };
     const db = getNodeSqliteKysely<SourceIndexDatabase>(this.database);
     const delta = params.source === "sessions" && params.delta;
     // Re-read mutable rebuild debt in this transaction; table presence is an
@@ -209,7 +253,7 @@ export class MemorySourceIndexKernel {
     let batch: MemoryChunkWrite[] = [];
     let removedIds: string[] = [];
     let hasEmbeddings = false;
-    const flush = () => {
+    const flush = (defer = false) => {
       this.deleteIds(entry.path, source, removedIds);
       removedIds = [];
       // Decide from the last row for each ID before writing relational rows.
@@ -255,16 +299,7 @@ export class MemorySourceIndexKernel {
           return !old || !Buffer.from(old).equals(encodeMemoryEmbedding(row.embedding));
         });
       }
-      writeMemoryChunks(
-        this.database,
-        {
-          path: entry.path,
-          source,
-          model,
-          now,
-        },
-        batch,
-      );
+      writeRows(batch, defer);
       if (vectorReady && this.search) {
         this.search.capability.write(this.search.index, vectors);
       }
@@ -282,12 +317,12 @@ export class MemorySourceIndexKernel {
       const id = memoryChunkRowId(source, entry.path, chunk, model);
       previous?.delete(id);
       hasEmbeddings ||= !keep && embedding.length > 0;
-      batch.push({ id, chunk, ...(keep ? {} : { embedding }) });
+      batch.push({ id, chunk, context, ...(keep ? {} : { embedding }) });
       if (batch.length === SOURCE_WRITE_BATCH_SIZE) {
         flush();
       }
     }
-    flush();
+    flush(true);
     if (previous?.size) {
       this.deleteIds(entry.path, source, [...previous], "complete-replacement");
     }

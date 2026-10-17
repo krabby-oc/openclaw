@@ -80,6 +80,20 @@ function write(database: MemoryIndexDatabase, value: MemorySourceIndexReplacemen
   );
 }
 
+function writeGroup(database: MemoryIndexDatabase, values: MemorySourceIndexReplacement[]) {
+  return runSqliteImmediateTransactionSync(database.db, () =>
+    new MemorySourceIndexKernel(database.db, database).replaceGroup(
+      values.map((value) => ({
+        header: value,
+        rows: value.chunks.map((chunk, index) => ({
+          chunk,
+          embedding: value.embeddings[index] ?? [],
+        })),
+      })),
+    ),
+  );
+}
+
 function remove(database: MemoryIndexDatabase, pathname: string, expectedHash: string) {
   return runSqliteImmediateTransactionSync(database.db, () =>
     new MemorySourceIndexKernel(database.db, database).deleteIfCurrent({
@@ -435,7 +449,11 @@ describe("memory source index native kernel", () => {
     },
   );
 
-  it("publishes 129 chunks with bounded batches instead of one insert per chunk", async () => {
+  it.each([
+    { chunks: [129], maxInserts: 8 },
+    { chunks: [64, 65], maxInserts: 8 },
+    { chunks: [1, 128, 1], maxInserts: 12 },
+  ])("publishes bounded chunk batches across sources ($chunks)", async ({ chunks, maxInserts }) => {
     const database = await createDatabase();
     let inserts = 0;
     const statements = observeHostDataSql((sql, preparingDatabase) => {
@@ -449,9 +467,12 @@ describe("memory source index native kernel", () => {
       }
     });
     try {
-      write(database, replacement("memory/batched.md", "batch", 129));
+      writeGroup(
+        database,
+        chunks.map((count, index) => replacement(`memory/batched-${index}.md`, "batch", count)),
+      );
       expect(inserts).toBeGreaterThan(0);
-      expect(inserts).toBeLessThanOrEqual(8);
+      expect(inserts).toBeLessThanOrEqual(maxInserts);
     } finally {
       statements.restore();
     }
@@ -463,9 +484,215 @@ describe("memory source index native kernel", () => {
       "memory_index_chunks_fts",
     ]) {
       expect(database.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({
-        count: 129,
+        count: chunks.reduce((sum, count) => sum + count, 0),
       });
     }
+  });
+
+  it("coalesces small sources while preserving searchable text and source metadata", async () => {
+    const database = await createDatabase();
+    const values = Array.from({ length: 8 }, (_, index): MemorySourceIndexReplacement => {
+      const value = replacement(`memory/group-${index}.md`, `topic${index}`);
+      return {
+        ...value,
+        ...(index % 2 === 0
+          ? { source: "memory" as const }
+          : { source: "sessions" as const, agentId: "main", sessionId: `session-${index}` }),
+        model: `model-${index}`,
+        now: 200 + index,
+        chunks: value.chunks.map((chunk) => ({
+          ...chunk,
+          importance: index + 1,
+          triggers: `trigger-${index}`,
+          projectKey: `project-${index}`,
+          provenance: undefined,
+        })),
+      };
+    });
+    let inserts = 0;
+    const statements = observeHostDataSql((sql, preparingDatabase) => {
+      if (
+        !preparingDatabase &&
+        /^insert into ["`]?memory_index_(?:chunks|chunk_recall_metadata|chunk_provenance)["`]?\s/i.test(
+          sql,
+        )
+      ) {
+        inserts++;
+      }
+    });
+    try {
+      writeGroup(database, values);
+    } finally {
+      statements.restore();
+    }
+    expect(inserts).toBe(3);
+    expect(
+      database.db
+        .prepare(
+          `SELECT c.path, c.source, c.model, c.text, c.updated_at,
+                  r.importance, r.triggers, r.project_key,
+                  p.origin_class, p.session_kind, p.observed_at
+           FROM memory_index_chunks c
+           JOIN memory_index_chunk_recall_metadata r ON r.chunk_id = c.id
+           JOIN memory_index_chunk_provenance p ON p.chunk_id = c.id
+           ORDER BY c.path`,
+        )
+        .all(),
+    ).toEqual(
+      Array.from({ length: 8 }, (_, index) => ({
+        path: `memory/group-${index}.md`,
+        source: index % 2 === 0 ? "memory" : "sessions",
+        model: `model-${index}`,
+        text: `topic${index} indexed text`,
+        updated_at: 200 + index,
+        importance: index + 1,
+        triggers: `trigger-${index}`,
+        project_key: `project-${index}`,
+        origin_class: "untrusted",
+        session_kind: "unknown",
+        observed_at: 200 + index,
+      })),
+    );
+    expect(
+      database.db
+        .prepare("SELECT path FROM memory_index_chunks_fts WHERE memory_index_chunks_fts MATCH ?")
+        .all("topic3"),
+    ).toEqual([{ path: "memory/group-3.md" }]);
+    expect(
+      database.db
+        .prepare(
+          `SELECT c.path, v.distance FROM memory_index_chunks_vec v
+           JOIN memory_index_chunks c ON c.id = v.id
+           WHERE v.embedding MATCH ? AND k = 8 ORDER BY c.path`,
+        )
+        .all(encodeMemoryEmbedding([1, 0, 0])),
+    ).toEqual(
+      Array.from({ length: 8 }, (_, index) => ({
+        path: `memory/group-${index}.md`,
+        distance: 0,
+      })),
+    );
+  });
+
+  it("keeps later replacements and retained metadata authoritative within a group", async () => {
+    const database = await createDatabase();
+    const source = { source: "sessions" as const, agentId: "main", sessionId: "repeated" };
+    const initial = { ...replacement("sessions/repeated.jsonl"), ...source };
+    write(database, initial);
+    markMemoryVectorIndexClean(database.db);
+    const first = { ...replacement(initial.entry.path, "discarded"), ...source, now: 200 };
+    const last = { ...replacement(initial.entry.path, "searchable"), ...source, now: 300 };
+    const chunk = last.chunks[0];
+    assert.ok(chunk);
+    const sibling = replacement("memory/sibling.md", "sibling");
+    runSqliteImmediateTransactionSync(database.db, () =>
+      new MemorySourceIndexKernel(database.db, database).replaceGroup([
+        ...[first, sibling, last].map((value) => ({
+          header: value,
+          rows: value.chunks.map((row) => ({ chunk: row, embedding: [0, 1, 0] })),
+        })),
+        {
+          header: { ...last, delta: true, now: 400 },
+          rows: [{ chunk: { ...chunk, text: "", importance: 9 }, embedding: [], retained: true }],
+        },
+      ]),
+    );
+    expect(
+      database.db
+        .prepare(
+          `SELECT c.text, c.updated_at, r.importance FROM memory_index_chunks c
+           JOIN memory_index_chunk_recall_metadata r ON r.chunk_id = c.id
+           WHERE c.path = ?`,
+        )
+        .all(initial.entry.path),
+    ).toEqual([{ text: "searchable indexed text", updated_at: 300, importance: 9 }]);
+    expect(
+      database.db
+        .prepare("SELECT path FROM memory_index_chunks_fts WHERE memory_index_chunks_fts MATCH ?")
+        .all("discarded OR original OR searchable"),
+    ).toEqual([{ path: initial.entry.path }]);
+    expect(
+      database.db
+        .prepare(
+          `SELECT c.path, hex(v.embedding) AS embedding FROM memory_index_chunks_vec v
+           JOIN memory_index_chunks c ON c.id = v.id ORDER BY c.path`,
+        )
+        .all(),
+    ).toEqual(
+      [sibling.entry.path, initial.entry.path].map((path) => ({
+        path,
+        embedding: Buffer.from(new Float32Array([0, 1, 0]).buffer)
+          .toString("hex")
+          .toUpperCase(),
+      })),
+    );
+    expect(
+      database.db.prepare("SELECT COUNT(*) AS count FROM memory_index_chunks_vec").get(),
+    ).toEqual({
+      count: 2,
+    });
+  });
+
+  it("applies later removals to chunks published by an intermediate removal flush", async () => {
+    const database = await createDatabase();
+    const initial = {
+      ...replacement("sessions/ordered.jsonl", "obsolete", 128),
+      source: "sessions" as const,
+      agentId: "main",
+      sessionId: "ordered",
+    };
+    write(database, initial);
+    const temporary = replacement(initial.entry.path, "temporary").chunks[0];
+    const survivor = replacement(initial.entry.path, "survivor").chunks[0];
+    assert.ok(temporary && survivor);
+    runSqliteImmediateTransactionSync(database.db, () =>
+      new MemorySourceIndexKernel(database.db, database).replaceRows({ ...initial, delta: true }, [
+        { chunk: temporary, embedding: [1, 0, 0] },
+        ...initial.chunks.map((chunk) => ({
+          removedId: memoryChunkRowId(initial.source, initial.entry.path, chunk, initial.model),
+        })),
+        {
+          removedId: memoryChunkRowId(initial.source, initial.entry.path, temporary, initial.model),
+        },
+        { chunk: survivor, embedding: [0, 1, 0] },
+      ]),
+    );
+    expect(database.db.prepare("SELECT text FROM memory_index_chunks").all()).toEqual([
+      { text: "survivor indexed text" },
+    ]);
+    expect(
+      database.db
+        .prepare("SELECT text FROM memory_index_chunks_fts WHERE memory_index_chunks_fts MATCH ?")
+        .all("temporary OR obsolete OR survivor"),
+    ).toEqual([{ text: "survivor indexed text" }]);
+    for (const table of [
+      "memory_index_chunk_recall_metadata",
+      "memory_index_chunk_provenance",
+      "memory_index_chunks_vec",
+    ]) {
+      expect(database.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({
+        count: 1,
+      });
+    }
+  });
+
+  it("rolls back grouped sources and vectors when a buffered provenance write fails", async () => {
+    const database = await createDatabase();
+    write(database, replacement("memory/first.md"));
+    write(database, replacement("memory/last.md"));
+    markMemoryVectorIndexClean(database.db);
+    const before = snapshot(database.db);
+    database.db
+      .exec(`CREATE TRIGGER fail_group_provenance BEFORE INSERT ON memory_index_chunk_provenance
+      WHEN NEW.observed_at = 999 BEGIN SELECT RAISE(ABORT, 'group provenance failed'); END`);
+    const first = replacement("memory/first.md", "changed");
+    const last = replacement("memory/last.md", "changed");
+    last.chunks = last.chunks.map((chunk) => ({
+      ...chunk,
+      provenance: { originClass: "owner", sessionKind: "interactive", observedAt: 999 },
+    }));
+    expect(() => writeGroup(database, [first, last])).toThrow("group provenance failed");
+    expect(snapshot(database.db)).toEqual(before);
   });
 
   it.each([
